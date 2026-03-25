@@ -105,9 +105,12 @@ static inline int connection_send(unsigned int tid, struct connection *c)
             total_resp_bytes[tid].fetch_add(ret);
             c->buf_offset += ret;
             c->buf_offset %= c->response_bytes;
-        } else {
+        } else if (ret == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             need_epoll_out = 1;
             break;
+        } else {
+            fprintf(stderr, "Error in connection_send()\n");
+            return -1;
         }
     }
 
