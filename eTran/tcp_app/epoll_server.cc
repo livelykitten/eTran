@@ -45,7 +45,7 @@ struct connection {
     int fd;
     unsigned int pending_bytes;
     unsigned int message_bytes;
-    unsigned int unsent_bytes;
+    unsigned int buf_offset;
     unsigned int response_bytes;
     uint32_t recv_len;
     bool has_epoll_out;
@@ -55,7 +55,7 @@ struct connection {
         has_epoll_out = 0;
         pending_bytes = 0;
         recv_len = 0;
-        unsent_bytes = 0;
+        buf_offset = 0;
         response_bytes = short_response ? SHORT_RESPONSE_SIZE : message_bytes;
         buf = (char *)calloc(1, max_buf_size);
     }
@@ -98,18 +98,19 @@ static inline int connection_send(unsigned int tid, struct connection *c)
     ssize_t ret;
     uint32_t target_bytes;
     while (c->pending_bytes) {
-        target_bytes = std::min(c->pending_bytes, c->response_bytes + c->unsent_bytes);
-        ret = write(c->fd, c->buf, std::min(target_bytes, (unsigned int)DATA_BLOCK_SIZE));
+        target_bytes = std::min(c->pending_bytes, (unsigned int)DATA_BLOCK_SIZE);
+        ret = write(c->fd, c->buf + c->buf_offset, target_bytes);
         if (ret > 0) {
             c->pending_bytes -= ret;
             total_resp_bytes[tid].fetch_add(ret);
-            // accumulate unsent_bytes
-            c->unsent_bytes += target_bytes - ret;
+            c->buf_offset += ret;
+            c->buf_offset %= c->response_bytes;
         } else {
             need_epoll_out = 1;
             break;
         }
     }
+
     return need_epoll_out;
 }
 
