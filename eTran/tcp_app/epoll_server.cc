@@ -213,7 +213,12 @@ void thread_func(unsigned int tid)
             if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
                 conn_fds.remove(c->fd);
                 // remove from epoll
-                epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL);
+                if (epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL) < 0) {
+                    fprintf(stderr, "Failed to remove erronous fd from epoll\n");
+                    close(c->fd);
+                    close(epfd);
+                    return;
+                }
                 close(c->fd);
                 delete c;
                 continue;
@@ -241,6 +246,19 @@ void thread_func(unsigned int tid)
                     return;
                 }
                 c->has_epoll_out = false;
+            } else {
+                conn_fds.remove(c->fd);
+                // remove from epoll
+                if (epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL) < 0) {
+                    fprintf(stderr, "Failed to remove erronous fd from epoll\n");
+                    close(c->fd);
+                    close(epfd);
+                    return;
+                }
+                epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL);
+                close(c->fd);
+                delete c;
+                continue;
             }
         }
 
