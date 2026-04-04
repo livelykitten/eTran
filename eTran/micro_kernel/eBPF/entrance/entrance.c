@@ -60,7 +60,9 @@ int xdp_sock_prog(struct xdp_md *ctx)
 
     /* check Ethernet header */
     proto_type = parse_ethhdr(&nh, data_end, &eth);
-    if (unlikely(proto_type != bpf_htons(ETH_P_IP)))
+    if (proto_type == bpf_htons(ETH_P_ARP))
+        return XDP_PASS;
+    if (proto_type != bpf_htons(ETH_P_IP))
         return XDP_DROP;
 
     /* check IP header */

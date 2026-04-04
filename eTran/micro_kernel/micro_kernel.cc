@@ -47,9 +47,9 @@ static int init_step = 0;
 class eTranNIC *etran_nic;
 
 /* Global options */
-static std::string opt_if_name = "ens1f1np1";
-static unsigned int opt_num_queues = 20;
-static unsigned int opt_queue_len = 2048;
+static std::string opt_if_name = "enp2s0";
+static unsigned int opt_num_queues = 1; // # of queues is 1 for my experiment.
+static unsigned int opt_queue_len = 256;
 static bool opt_napi_polling = true;
 static bool opt_socket_busy_poll = false;
 static bool opt_intr_affinity = true;

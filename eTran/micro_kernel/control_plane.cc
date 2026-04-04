@@ -1070,7 +1070,7 @@ static int poll_uds(int timeout_ms)
 static void *control_loop(void *arg)
 {
     struct epoll_event ev;
-    uint64_t tcp_s, tcp_e, homa_next_tsc = 0;
+    uint64_t tcp_s, tcp_e; //, homa_next_tsc = 0;
 
     pthread_cleanup_push((void (*)(void *))destroy_all_apps, nullptr);
 
@@ -1088,8 +1088,8 @@ static void *control_loop(void *arg)
         perror("epoll_ctl");
         exit(EXIT_FAILURE);
     }
-    homa_next_tsc = get_cycles() + us_to_cycles(1000);
-    
+    // homa_next_tsc = get_cycles() + us_to_cycles(1000);
+
     for (;;)
     {
         /* poll unix domain socket */
@@ -1110,11 +1110,11 @@ static void *control_loop(void *arg)
         tcp_e = get_cycles();
 
         /* poll homa timeout events */
-        if (get_cycles() >= homa_next_tsc)
-        {
-            poll_homa_to();
-            homa_next_tsc = get_cycles() + us_to_cycles(TICK_US);
-        }
+        // if (get_cycles() >= homa_next_tsc)
+        // {
+        //     poll_homa_to();
+        //     homa_next_tsc = get_cycles() + us_to_cycles(TICK_US);
+        // }
 
         /* decide how long to block */
         uint64_t t = cycles_to_us(tcp_e - tcp_s);

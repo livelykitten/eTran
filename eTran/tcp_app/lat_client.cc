@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/time.h>
+#include <vector>
 
 /* time related */
 static inline uint64_t rdtsc(void)

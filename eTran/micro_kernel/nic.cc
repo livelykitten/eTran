@@ -35,25 +35,28 @@ static void disable_napi_polling(std::string if_name)
 static int set_affinity(std::string pcie_name)
 {
     std::string cmd;
+    // printf("pcie_name: %s\n", pcie_name.c_str());
     cmd = "cat /proc/interrupts | grep " + pcie_name + " | awk 'NR > 1 {print $1}' | sed 's/://'";
     std::string res;
     std::vector<int> irq_list;
-    exec_cmd(cmd, res);
-    if (res.empty())
-    {
-        fprintf(stderr, "Failed to get IRQ list\n");
-        return -1;
-    }
+    // exec_cmd(cmd, res);
+    // if (res.empty())
+    // {
+    //     fprintf(stderr, "Failed to get IRQ list\n");
+    //     return -1;
+    // }
 
-    std::string delimiter = "\n";
-    size_t pos = 0;
-    std::string token;
-    while ((pos = res.find(delimiter)) != std::string::npos)
-    {
-        token = res.substr(0, pos);
-        irq_list.push_back(std::stoi(token));
-        res.erase(0, pos + delimiter.length());
-    }
+    // std::string delimiter = "\n";
+    // size_t pos = 0;
+    // std::string token;
+    // while ((pos = res.find(delimiter)) != std::string::npos)
+    // {
+    //     token = res.substr(0, pos);
+    //     irq_list.push_back(std::stoi(token));
+    //     res.erase(0, pos + delimiter.length());
+    // }
+
+    irq_list.push_back(0);
 
     unsigned int affinity_value = 1;
     for (int irq : irq_list)
@@ -92,7 +95,8 @@ static int check_nic(std::string if_name, unsigned int num_queues, std::string &
 
     cmd = "ethtool -l " + if_name + " | grep 'Combined' | awk 'NR==1 {print $2}'";
     res.clear();
-    exec_cmd(cmd, res);
+    // exec_cmd(cmd, res);
+    res = "1";
     unsigned int nic_queues = std::stoi(res);
     if (num_queues > nic_queues)
     {
@@ -146,30 +150,33 @@ int eTranNIC::create_nic(void)
         return -1;
 
     /* set the number of NIC queues */
+    // it is fixed to 1
     cmd = "ethtool -L " + _if_name + " combined " + std::to_string(_num_queues);
-    if (!exec_cmd(cmd))
-    {
-        fprintf(stderr, "Failed to configure NIC queues\n");
-        return -1;
-    }
+    // if (!exec_cmd(cmd))
+    // {
+    //     fprintf(stderr, "Failed to configure NIC queues\n");
+    //     return -1;
+    // }
 
     /* set the queue length */
+    // it is fixed to 256
     cmd = "ethtool -G " + _if_name + " rx " + std::to_string(_queue_len) + " tx " + std::to_string(_queue_len);
-    if (!exec_cmd(cmd))
-    {
-        fprintf(stderr, "Failed to configure NIC queues\n");
-        return -1;
-    }
+    // if (!exec_cmd(cmd))
+    // {
+    //     fprintf(stderr, "Failed to configure NIC queues\n");
+    //     return -1;
+    // }
 
     if (_intr_affinity)
     {
         /* disable irqbalance */
+        // my system does not have irqbalance, because it is single queued.
         cmd = "killall irqbalance > /dev/null 2>&1";
-        if (!exec_cmd(cmd))
-        {
-            fprintf(stderr, "Failed to kill irqbalance\n");
-            return -1;
-        }
+        // if (!exec_cmd(cmd))
+        // {
+        //     fprintf(stderr, "Failed to kill irqbalance\n");
+        //     return -1;
+        // }
         /* set NIC interrupt affinity */
         if (set_affinity(pcie_name))
             return -1;
@@ -177,15 +184,16 @@ int eTranNIC::create_nic(void)
 
     if (!_coalescing)
     {
-        /* disable NIC coalescing */
+        /* disable NIC coalescing */ // not supported in my NICs.
         cmd = "ethtool -C " + _if_name + " adaptive-rx off rx-usecs 5 rx-frames 1";
-        if (!exec_cmd(cmd))
-        {
-            fprintf(stderr, "Failed to configure NIC intrs\n");
-            return -1;
-        }
+        // if (!exec_cmd(cmd))
+        // {
+        //     fprintf(stderr, "Failed to configure NIC intrs\n");
+        //     return -1;
+        // }
     }
 
+    // here, gro_flush_timeout is set to 200 and napi_defer_hard_irqs is set to 100
     if (_napi_polling)
     {
         if (enable_napi_polling(_if_name))

@@ -13,6 +13,14 @@
     } \
 } while (0)
 
+#define INIT_CHECK_GOTO(call, goto_label) do { \
+    int ret = (call); \
+    if (ret) { \
+        fprintf(stderr, "ERROR: %s failed (%d): %s\n", #call, ret, strerror(-ret)); \
+        goto goto_label; \
+    } \
+} while (0)
+
 #define SUPPORT_PROTO(proto) ((proto) == IPPROTO_TCP || (proto) == IPPROTO_HOMA)
 
 // #define DEBUG_TCP

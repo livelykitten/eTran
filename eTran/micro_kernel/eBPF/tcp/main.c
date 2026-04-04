@@ -92,7 +92,7 @@ int xdp_gen_prog(struct xdp_md *ctx)
     }
     ts_opt = (struct tcp_timestamp_opt *)(tcph + 1);
     if (unlikely(ts_opt + 1 > data_end)) {
-        xdp_gen_log_panic("ts_opt + 1 > data_end");
+        xdp_gen_log_panic("ts_opt + 1 > data_end 1");
         return XDP_ABORTED;
     }
 
@@ -288,7 +288,7 @@ int xdp_sock_prog(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
-    xdp_log("XDP receive pkt at Queue#%u", ctx->rx_queue_index);
+    // xdp_log("XDP receive pkt at Queue#%u", ctx->rx_queue_index);
 
     if (unlikely(ret = bpf_xdp_adjust_meta(ctx, -(int)sizeof(*data_meta)))) {
         xdp_log_err("xdp_adjust_meta failed: %d", ret);
@@ -311,7 +311,9 @@ int xdp_sock_prog(struct xdp_md *ctx)
     
     // Ethernet header
     proto_type = parse_ethhdr(&nh, data_end, &eth);
-    if (unlikely(proto_type != bpf_htons(ETH_P_IP))) {
+    if (proto_type == bpf_htons(ETH_P_ARP))
+        return XDP_PASS;
+    if (proto_type != bpf_htons(ETH_P_IP)) {
         xdp_log_err("proto_type != ETH_P_IP");
         return XDP_DROP;
     }
@@ -337,7 +339,7 @@ int xdp_sock_prog(struct xdp_md *ctx)
 
     struct tcp_timestamp_opt *ts_opt = (struct tcp_timestamp_opt *)(tcph + 1);
     if (unlikely(ts_opt + 1 > data_end)) {
-        xdp_log_err("ts_opt + 1 > data_end");
+        xdp_log_err("ts_opt + 1 > data_end 2");
         return XDP_DROP;
     }
 
@@ -348,8 +350,8 @@ int xdp_sock_prog(struct xdp_md *ctx)
 
     c = bpf_map_lookup_elem(&bpf_tcp_conn_map, &key);
     if (unlikely(!c)) {
-        xdp_log_err("bpf_tcp_conn not found");
-        return XDP_DROP;
+        // xdp_log_err("bpf_tcp_conn not found 2");
+        return XDP_PASS;
     }
 
     if (prev_conn[cpu] != NULL_CONN && prev_conn[cpu] != c->cc_idx) {
@@ -364,18 +366,28 @@ int xdp_sock_prog(struct xdp_md *ctx)
     ret = tcp_rx_process(tcph, c, pkt_len, data_meta, (iph->tos & IPTOS_ECN_CE) == IPTOS_ECN_CE, cpu);
     
     if (likely(ret == XDP_REDIRECT && qid < MAX_NIC_QUEUES)) {
-        return bpf_redirect_map(&xsks_map, c->qid2xsk[qid], XDP_DROP);
+        return bpf_redirect_map(&xsks_map, c->qid2xsk[qid], XDP_PASS);
     }
 
-    return XDP_DROP;
+    return XDP_PASS;
 
 slowpath:
     sp = bpf_map_lookup_elem(&slow_path_map, &qid);
     if (unlikely(!sp || !sp->active)) {
         xdp_log_err("ERROR: slow_path_info not found or inactive");
-        return XDP_DROP;
+        return XDP_PASS;
     }
-    return bpf_redirect_map(&xsks_map, sp->sp_xsk_map_key, XDP_DROP);
+
+    ret = bpf_redirect_map(&xsks_map, sp->sp_xsk_map_key, XDP_PASS);
+    if (ret == XDP_REDIRECT) {
+        xdp_log("XDP_REDIRECT is returned from the slow path\n");
+    } else if (ret == XDP_PASS) {
+        xdp_log("XDP_PASS is returned from the slow path\n");
+    } else {
+        xdp_log_err("%d is returned from the slow path\n", ret);
+    }
+
+    return ret;
 }
 
 SEC("xdp/cpumap")

@@ -23,10 +23,27 @@ class eTranHoma *etran_homa;
 static void remove_xdp(void)
 {
     uint32_t prog_id;
-    
-    bpf_xdp_query_id(etran_entrance->_ebpf.ifindex, etran_entrance->_ebpf.attach_mode, &prog_id);
 
-    bpf_xdp_detach(etran_entrance->_ebpf.ifindex, XDP_FLAGS_UPDATE_IF_NOEXIST, 0);
+    int ret;
+
+    ret = bpf_xdp_query_id(etran_entrance->_ebpf.ifindex, etran_entrance->_ebpf.attach_mode, &prog_id);
+    if (ret) {
+        fprintf(stderr, "ERROR: bpf_xdp_query_id() failed\n");
+        return;
+    }
+
+    if (prog_id == 0) {
+        fprintf(stdout, "No XDP program attached (already clean)\n");
+        return;
+    }
+
+    ret = bpf_xdp_detach(etran_entrance->_ebpf.ifindex, etran_entrance->_ebpf.attach_mode, 0);
+    if (ret) {
+        fprintf(stderr, "ERROR: bpf_xdp_detach() failed\n");
+        return;
+    }
+
+    fprintf(stdout, "Detached XDP program %u from ifindex %s\n", prog_id, etran_entrance->_ebpf.if_name.c_str());
 }
 
 void xsk_delete_socket(struct xsk_socket_info *xsk_info)
@@ -146,7 +163,7 @@ int ebpf_init(void)
     etran_entrance = new eTranEntrance(
         etran_nic,
         XDP_MODE_NATIVE,
-        XDP_USE_NEED_WAKEUP | XDP_ZEROCOPY,
+        XDP_USE_NEED_WAKEUP, // | XDP_ZEROCOPY,
         false,
         0,
         (struct trans_params_t *)&trans_params);
@@ -158,21 +175,21 @@ int ebpf_init(void)
     etran_tcp = new eTranTCP(
         etran_nic,
         XDP_MODE_NATIVE,
-        XDP_USE_NEED_WAKEUP | XDP_ZEROCOPY,
+        XDP_USE_NEED_WAKEUP, // | XDP_ZEROCOPY,
         false,
         0,
         (struct trans_params_t *)&tcp_params);
 
-    struct trans_params_t homa_params;
-    homa_params.homa.workload_type = opt_workload_type;
+    // struct trans_params_t homa_params;
+    // homa_params.homa.workload_type = opt_workload_type;
 
-    etran_homa = new eTranHoma(
-        etran_nic,
-        XDP_MODE_NATIVE,
-        XDP_USE_NEED_WAKEUP | XDP_ZEROCOPY,
-        false,
-        0,
-        (struct trans_params_t *)&homa_params);
+    // etran_homa = new eTranHoma(
+    //     etran_nic,
+    //     XDP_MODE_NATIVE,
+    //     XDP_USE_NEED_WAKEUP | XDP_ZEROCOPY,
+    //     false,
+    //     0,
+    //     (struct trans_params_t *)&homa_params);
 
     /* Remove existing XDP program */
     remove_xdp();
@@ -186,12 +203,12 @@ int ebpf_init(void)
     INIT_CHECK(etran_tcp->init_ebpf_maps());
 
     /* Load homa eBPF programs and initialize eBPF maps */
-    INIT_CHECK(etran_homa->load_ebpf_programs());
-    INIT_CHECK(etran_homa->init_ebpf_maps());
+    // INIT_CHECK(etran_homa->load_ebpf_programs());
+    // INIT_CHECK(etran_homa->init_ebpf_maps());
 
     /* Add tcp and homa programs to entrance */
     INIT_CHECK(add_trans_to_entrance(etran_entrance, etran_tcp));
-    INIT_CHECK(add_trans_to_entrance(etran_entrance, etran_homa));
+    // INIT_CHECK(add_trans_to_entrance(etran_entrance, etran_homa));
 
     return 0;
 }
