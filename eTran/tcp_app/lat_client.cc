@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <algorithm>
+#include <vector>
 #include <cassert>
 #include <unistd.h>
 #include <fcntl.h>
