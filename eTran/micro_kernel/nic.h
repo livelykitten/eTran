@@ -22,6 +22,8 @@ public:
     unsigned int _num_queues;
     /* NIC queue length */
     unsigned int _queue_len;
+    /* If Combined queue is supported */
+    bool _is_combined;
     /* enable NAPI polling */
     bool _napi_polling;
     /* enable socket busy poll */
@@ -44,6 +46,7 @@ public:
              bool napi_polling, bool socket_busy_poll, bool intr_affinity, bool coalescing) : _if_name(if_name), _num_queues(num_queues), _queue_len(queue_len),
                                                                      _napi_polling(napi_polling), _socket_busy_poll(socket_busy_poll), _intr_affinity(intr_affinity), _coalescing(coalescing)
     {
+        _is_combined = true;
         if (create_nic()) {
             throw std::runtime_error("Failed to create NIC");
         }

@@ -312,7 +312,7 @@ static void destroy_rss_context(struct app_ctx *actx)
 static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, std::vector<unsigned int> &qids)
 {
     std::string cmd;
-    std::string res;
+    // std::string res;
     int weight[MAX_NIC_QUEUES] = {0};
 
     // XXX: Homa doesn't support RSS, we can only support one Homa application with queue-level isolation
@@ -335,25 +335,27 @@ static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, 
         if (i != MAX_NIC_QUEUES - 1)
             weight_str += " ";
     }
-    cmd = "ethtool -X " + etran_nic->_if_name + " context new weight " + weight_str;
+    // cmd = "ethtool -X " + etran_nic->_if_name + " context new weight " + weight_str;
+    cmd = "ethtool -X " + etran_nic->_if_name + " weight " + weight_str; // because having multiple contexts is not allowed in XL710
     std::cout << cmd << std::endl;
-    exec_cmd(cmd, res);
-    if (res.empty())
+    // exec_cmd(cmd, res);
+    if (!exec_cmd(cmd))
     {
         fprintf(stderr, "Failed to configure NIC flow director\n");
         return -1;
     }
-    size_t pos = res.find("New RSS context is ");
-    if (pos != std::string::npos)
-    {
-        actx->rss_ctx_id = std::stoi(res.substr(pos + 19));
-        printf("Created RSS context: %d\n", actx->rss_ctx_id);
-    }
-    else
-    {
-        fprintf(stderr, "The required pattern was not found.\n");
-        return -1;
-    }
+    actx->rss_ctx_id = 0; // XL710 does not support multiple ctx
+    // size_t pos = res.find("New RSS context is ");
+    // if (pos != std::string::npos)
+    // {
+    //     actx->rss_ctx_id = std::stoi(res.substr(pos + 19));
+    //     printf("Created RSS context: %d\n", actx->rss_ctx_id);
+    // }
+    // else
+    // {
+    //     fprintf(stderr, "The required pattern was not found.\n");
+    //     return -1;
+    // }
 
     return 0;
 }

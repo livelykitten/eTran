@@ -2,6 +2,7 @@
 
 #include <ifaddrs.h>
 #include <string>
+#include <charconv>
 #include <algorithm>
 
 #include <netinet/in.h>
@@ -32,10 +33,10 @@ static void disable_napi_polling(std::string if_name)
     printf("disable napi polling\n");
 }
 
-static int set_affinity(std::string pcie_name)
+static int set_affinity(std::string pcie_name, std::string if_name)
 {
     std::string cmd;
-    cmd = "cat /proc/interrupts | grep " + pcie_name + " | awk 'NR > 1 {print $1}' | sed 's/://'";
+    cmd = "cat /proc/interrupts | grep " + pcie_name + " | grep " + if_name + " | awk 'NR > 1 {print $1}' | sed 's/://'";
     std::string res;
     std::vector<int> irq_list;
     exec_cmd(cmd, res);
@@ -93,7 +94,14 @@ static int check_nic(std::string if_name, unsigned int num_queues, std::string &
     cmd = "ethtool -l " + if_name + " | grep 'Combined' | awk 'NR==1 {print $2}'";
     res.clear();
     exec_cmd(cmd, res);
-    unsigned int nic_queues = std::stoi(res);
+    
+    unsigned int nic_queues;
+    auto [ptr, ec] = std::from_chars(res.data(), res.data() + res.size(), nic_queues);
+    if (ec != std::errc()) {
+        printf("Warning: cmd result not successful\n");
+        return 0;
+    }
+    
     if (num_queues > nic_queues)
     {
         fprintf(stderr, "Number of queues is greater than NIC queues (%u > %d)\n", num_queues, nic_queues);
@@ -133,6 +141,7 @@ static uint32_t getIPAddress(const std::string &if_name)
     }
 
     freeifaddrs(ifaddr);
+    printf("%d\n", ip_address);
     return ip_address;
 }
 
@@ -146,7 +155,11 @@ int eTranNIC::create_nic(void)
         return -1;
 
     /* set the number of NIC queues */
-    cmd = "ethtool -L " + _if_name + " combined " + std::to_string(_num_queues);
+    if (_is_combined)
+        cmd = "ethtool -L " + _if_name + " combined " + std::to_string(_num_queues);
+    else
+        cmd = "ethtool -L " + _if_name + " rx " + std::to_string(_num_queues) + " tx " + std::to_string(_num_queues);
+    
     if (!exec_cmd(cmd))
     {
         fprintf(stderr, "Failed to configure NIC queues\n");
@@ -171,14 +184,15 @@ int eTranNIC::create_nic(void)
             return -1;
         }
         /* set NIC interrupt affinity */
-        if (set_affinity(pcie_name))
+        if (set_affinity(pcie_name, _if_name))
             return -1;
     }
 
     if (!_coalescing)
     {
         /* disable NIC coalescing */
-        cmd = "ethtool -C " + _if_name + " adaptive-rx off rx-usecs 5 rx-frames 1";
+        // cmd = "ethtool -C " + _if_name + " adaptive-rx off rx-usecs 5 rx-frames 1";
+        cmd = "ethtool -C " + _if_name + " adaptive-rx off rx-usecs 5";
         if (!exec_cmd(cmd))
         {
             fprintf(stderr, "Failed to configure NIC intrs\n");

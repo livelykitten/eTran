@@ -15,12 +15,12 @@
 
 #define MAX_PEER 32
 
-#define MAX_NIC_QUEUES 20
+#define MAX_NIC_QUEUES 8
 #define MAX_XSK_FD 1024
 
 #define CACHE_LINE_SIZE 64
-#define MAX_CPU 20
-#define MAXMAX_CPU 32
+#define MAX_CPU 8
+#define MAXMAX_CPU 8
 
 #define MAX_BUCKET_SIZE 8192
 #define MAX_QUEUE_SIZE 1024
