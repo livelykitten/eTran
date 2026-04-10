@@ -2,6 +2,7 @@
 
 static inline bool exec_cmd(const std::string &cmd, std::string &result)
 {
+    printf("exec_cmd: %s\n", cmd.c_str());
     std::FILE *pipe = popen(cmd.c_str(), "r");
     if (!pipe)
         return false;

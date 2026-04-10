@@ -746,11 +746,11 @@ int homa_bind(struct app_ctx_per_thread *tctx, struct appout_homa_bind_t *homa_b
     hs->local_ip = etran_nic->_local_ip;
     hs->local_port = local_port;
 
-    record_port(tctx->actx, hs->local_port, 0);
+    // record_port(tctx->actx, hs->local_port, 0);
 
     if (reg_homa_socket_ebpf(tctx, hs->local_port))
     {
-        unrecord_port(tctx->actx, hs->local_port);
+        // unrecord_port(tctx->actx, hs->local_port);
         free_port(hs->local_port);
         delete hs;
         return -1;
@@ -776,7 +776,7 @@ int homa_close(struct app_ctx_per_thread *tctx, opaque_ptr opaque_socket)
 
     unreg_homa_socket_ebpf(s->local_port);
 
-    unrecord_port(tctx->actx, s->local_port);
+    // unrecord_port(tctx->actx, s->local_port);
 
     free_port(s->local_port);
 
@@ -824,7 +824,7 @@ static void free_homa_sockets(struct app_ctx *actx)
         {
             it = homa_sockets.erase(it);
             unreg_homa_socket_ebpf(s->local_port);
-            unrecord_port(actx, s->local_port);
+            // unrecord_port(actx, s->local_port);
             free_port(s->local_port);
             delete s;
         }

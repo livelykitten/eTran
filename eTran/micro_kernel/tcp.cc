@@ -184,7 +184,7 @@ void _tcp_connection_close(struct tcp_connection *c, enum connection_status stat
     /* this struct is created for listener */
     if (c->type == TCP_CONN_TYPE_FAKE)
     {
-        unrecord_port(c->tctx->actx, c->local_port);
+        // unrecord_port(c->tctx->actx, c->local_port);
         free_port(c->local_port);
         std::lock_guard<std::mutex> lock(tcp_connections_lock);
         tcp_connections.erase(flow_tuple(c->remote_ip, c->remote_port, c->local_ip, c->local_port));
@@ -206,7 +206,7 @@ void _tcp_connection_close(struct tcp_connection *c, enum connection_status stat
     /* step3: free port if this connection is created through connect() */
     if (!c->listener)
     {
-        unrecord_port(c->tctx->actx, c->local_port);
+        // unrecord_port(c->tctx->actx, c->local_port);
         free_port(c->local_port);
     }
 
@@ -1293,7 +1293,7 @@ int tcp_open(struct app_ctx_per_thread *tctx, struct appout_tcp_open_t *tcp_open
             return -1;
         }
         local_port = ret;
-        record_port(tctx->actx, local_port, remote_port);
+        // record_port(tctx->actx, local_port, remote_port);
     }
     c->release = tcp_connection_close;
 
@@ -1384,7 +1384,7 @@ int tcp_bind(struct app_ctx_per_thread *tctx, struct appout_tcp_bind_t *tcp_bind
     c->opaque_connection = opaque_connection;
     c->flags = 0;
 
-    record_port(c->tctx->actx, c->local_port, 0);
+    // record_port(c->tctx->actx, c->local_port, 0);
 
     reg_tcp_conn_slowpath(c);
 
