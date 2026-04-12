@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <string.h>
 
 #include <linux/types.h>
 
@@ -283,6 +284,45 @@ static inline uint16_t udp_csum(uint32_t saddr, uint32_t daddr, uint32_t len,
 		csum += udp_pkt[cnt >> 1];
 
 	return csum_tcpudp_magic(saddr, daddr, len, proto, csum);
+}
+
+static inline uint16_t ones_complement_sum16(const uint8_t *buf, size_t len)
+{
+    uint32_t sum = 0;
+    size_t i;
+
+    for (i = 0; i + 1 < len; i += 2)
+        sum += ((uint32_t)buf[i] << 8) | buf[i + 1];
+
+    if (i < len)
+        sum += ((uint32_t)buf[i] << 8);
+
+    while (sum >> 16)
+        sum = (sum & 0xffff) + (sum >> 16);
+
+    return (uint16_t)sum;
+}
+
+static inline uint16_t tcp_checksum_ipv4(__be32 saddr, __be32 daddr,
+                                  const uint8_t *tcp_seg, uint16_t tcp_len, uint8_t proto)
+{
+    uint32_t sum = 0;
+    uint8_t pseudo[12];
+
+    memcpy(&pseudo[0], &saddr, 4);
+    memcpy(&pseudo[4], &daddr, 4);
+    pseudo[8] = 0;
+    pseudo[9] = proto;
+    pseudo[10] = (uint8_t)(tcp_len >> 8);
+    pseudo[11] = (uint8_t)(tcp_len & 0xff);
+
+    sum += ones_complement_sum16(pseudo, sizeof(pseudo));
+    sum += ones_complement_sum16(tcp_seg, tcp_len);
+
+    while (sum >> 16)
+        sum = (sum & 0xffff) + (sum >> 16);
+
+    return (uint16_t)(~sum);
 }
 
 static inline uint16_t tcp_csum(uint32_t saddr, uint32_t daddr, uint32_t len,

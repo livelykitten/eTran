@@ -260,7 +260,7 @@ static __always_inline int xmit_packet_fib_lookup(struct xdp_md *ctx, struct eth
                                        struct iphdr *iph) {
   int err = fib_lookup(ctx, eth, iph);
   if (unlikely(err)) {
-    log_err("bpf_fib_lookup failed, check routing table in kernel.");
+    log_err("bpf_fib_lookup failed, check routing table in kernel.2, err = %d", err);
   }
   return XDP_TX;
 }

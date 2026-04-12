@@ -69,22 +69,51 @@ static __always_inline void set_ethhdr(struct ethhdr *eth, struct bpf_fib_lookup
 
 static __always_inline int fib_lookup(struct xdp_md *ctx, struct ethhdr *eth, struct iphdr *iph)
 {
+    // xdp_log("fib_lookup() called");
+    // xdp_egress_log("56778");
+    // xdp_log_err("12344444444");
+    // xdp_egress_log_err("567788888888");
     int ret = find_dst_entry_in_cache(iph, eth);
+    // xdp_log("ret of find_dst_entry_in_cache(): %d", ret);
+    // xdp_log("cache hit, src: %pM, dst: %pM, proto: %d", eth->h_source, eth->h_dest, eth->h_proto);
+    // xdp_log("src mac %02x:%02x:%02x:%02x:%02x:%02x",
+    // eth->h_source[0], eth->h_source[1], eth->h_source[2],
+    // eth->h_source[3], eth->h_source[4], eth->h_source[5]);
+
+    // xdp_log("dst mac %02x:%02x:%02x:%02x:%02x:%02x",
+    // eth->h_dest[0], eth->h_dest[1], eth->h_dest[2],
+    // eth->h_dest[3], eth->h_dest[4], eth->h_dest[5]);
     if (likely(ret == 0)) {
         /* cache hit */
         return 0;
     }
 
     struct bpf_fib_lookup fib_params = {0};
+    // xdp_log("ctx->ingress_ifindex: %d", ctx->ingress_ifindex);
+    // xdp_log("ctx->egress_ifindex: %d\n", ctx->egress_ifindex);
     set_fib_params(&fib_params, iph, ctx->ingress_ifindex);
     int fib_rc = bpf_fib_lookup(ctx, &fib_params, sizeof(fib_params), BPF_FIB_LOOKUP_DIRECT | BPF_FIB_LOOKUP_OUTPUT);
-    if (unlikely(fib_rc != BPF_FIB_LKUP_RET_SUCCESS))
+    if (unlikely(fib_rc != BPF_FIB_LKUP_RET_SUCCESS)) {
+        xdp_log_err("FIB lookup failed: %d 1234", fib_rc);
+        xdp_egress_log_err("FIB lookup failed: %d", fib_rc);
         return -1;
+    }
+
+
+    // xdp_log("lookup finished. src mac: %pM", fib_params.smac);
+    // xdp_log("lookup finished. dst mac: %pM", fib_params.dmac);
+        
     /* Fill ethernet header */
     set_ethhdr(eth, &fib_params);
     
     /* update cache */
-    return update_dst_entry_in_cache(iph, eth);
+    ret = update_dst_entry_in_cache(iph, eth);
+    if (ret) {
+        xdp_log_err("update_dst_entry_in_cache() failed: %d by log_err", ret);
+        xdp_egress_log_err("update_dst_entry_in_cache() failed: %d", ret);
+    }
+    // xdp_log("ret: %d", ret);
+    return ret;
 }
 
 static __always_inline int xmit_packet(struct xdp_md *ctx, struct ethhdr *eth, struct iphdr *iph)

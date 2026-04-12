@@ -306,7 +306,7 @@ fail:
 static void send_tcp_reset(struct app_ctx *actx, const struct pkt_tcp *orig_p)
 {
     struct pkt_tcp *p;
-    struct tcp_hdr *tcp;
+    // struct tcp_hdr *tcp;
     uint16_t len = sizeof(*p);
 
     p = (struct pkt_tcp *)calloc(1, sizeof(*p));
@@ -316,7 +316,7 @@ static void send_tcp_reset(struct app_ctx *actx, const struct pkt_tcp *orig_p)
         return;
     }
 
-    tcp = &p->tcp;
+    // tcp = &p->tcp;
 
     memcpy(&p->eth, &orig_p->eth, sizeof(p->eth));
     p->eth.dest = orig_p->eth.src;
@@ -337,8 +337,11 @@ static void send_tcp_reset(struct app_ctx *actx, const struct pkt_tcp *orig_p)
     p->tcp.urgp = 0;
 
     /* calculate header checksums */
-    p->ip.chksum = ip_fast_csum((const void *)&p->ip, p->ip._v_hl);
-    p->tcp.chksum = tcp_csum(p->ip.src, p->ip.dest, len, IPPROTO_TCP, (uint8_t *)tcp);
+    p->ip.chksum = ip_fast_csum((const void *)&p->ip, IPH_HL(&p->ip)); 
+    uint16_t tcp_len = len - offsetof(struct pkt_tcp, tcp);
+    p->tcp.chksum = tcp_checksum_ipv4(p->ip.src, p->ip.dest, (uint8_t *)&p->tcp, tcp_len, IPPROTO_TCP);
+    p->tcp.chksum = htons(p->tcp.chksum);
+
 
     /* send packet */
     slow_path_send_tcp(actx, p, len, false, POISON_32);
@@ -353,7 +356,7 @@ static void send_tcp_control(struct tcp_connection *c, uint8_t flags, int ts_opt
     struct pkt_tcp *p;
     struct tcp_mss_opt *opt_mss;
     struct tcp_timestamp_opt *opt_ts;
-    struct tcp_hdr *tcp;
+    // struct tcp_hdr *tcp;
 
     uint32_t remote_ip = c->remote_ip;
     uint16_t remote_port = c->remote_port;
@@ -380,7 +383,7 @@ static void send_tcp_control(struct tcp_connection *c, uint8_t flags, int ts_opt
         fprintf(stderr, "send_tcp_control: failed to allocate memory\n");
         return;
     }
-    tcp = &p->tcp;
+    // tcp = &p->tcp;
 
     /* fill ipv4 header */
     IPH_VHL_SET(&p->ip, 4, 5);
@@ -398,7 +401,7 @@ static void send_tcp_control(struct tcp_connection *c, uint8_t flags, int ts_opt
     p->tcp.src = htons(local_port);
     p->tcp.dest = htons(remote_port);
     p->tcp.seqno = htonl(local_seq);
-    p->tcp.ackno = htonl(remote_seq);
+    p->tcp.ackno = (flags & TCP_ACK) ? htonl(remote_seq) : 0;
     TCPH_HDRLEN_FLAGS_SET(&p->tcp, 5 + optlen / 4, flags);
     p->tcp.wnd = htons(11680); /* TODO */
     p->tcp.chksum = 0;
@@ -424,8 +427,11 @@ static void send_tcp_control(struct tcp_connection *c, uint8_t flags, int ts_opt
     }
 
     /* calculate header checksums */
-    p->ip.chksum = ip_fast_csum((const void *)&p->ip, p->ip._v_hl);
-    p->tcp.chksum = tcp_csum(p->ip.src, p->ip.dest, len, IPPROTO_TCP, (uint8_t *)tcp);
+    p->ip.chksum = ip_fast_csum((const void *)&p->ip, IPH_HL(&p->ip));
+    uint16_t tcp_len = len - offsetof(struct pkt_tcp, tcp);
+    p->tcp.chksum = 0;
+    p->tcp.chksum = tcp_checksum_ipv4(p->ip.src, p->ip.dest, (uint8_t *)&p->tcp, tcp_len, IPPROTO_TCP);
+    p->tcp.chksum = htons(p->tcp.chksum);
 
     /* send packet */
     slow_path_send_tcp(actx, p, len, false, c->qid);
@@ -1105,7 +1111,10 @@ int poll_tcp_handshake_events(void)
             /* arm a TCP handshake timer */
             c->next_timeout_tsc = get_cycles() + us_to_cycles(TCP_HANDSHAKE_TIMEOUT * 1000);
             /* send SYN packet */
-            send_tcp_control(c, TCP_SYN | TCP_ECE | TCP_CWR, 1, 0, TCP_MSS);
+            // printf("tcp.cc:1114: send_tcp_control(c, TCP_SYN | TCP_ECE | TCP_CWR, 1, 0, TCP_MSS); from pid %d", c->tctx->actx->pid);
+            // send_tcp_control(c, TCP_SYN | TCP_ECE | TCP_CWR, 1, 0, TCP_MSS);
+            send_tcp_control(c, TCP_SYN, 1, 0, TCP_MSS);
+
             work++;
             break;
         case CONN_WAIT_TX_SYNACK:
@@ -1510,6 +1519,10 @@ void slow_path_send_tcp(struct app_ctx *actx, struct pkt_tcp *tcphdr, uint16_t l
     xsk_ring_prod__submit(&xsk_info->tx, 1);
 
     kick_tx(xsk_info);
+
+    if (TCPH_FLAGS(&tcphdr->tcp) & TCP_SYN) {
+        printf("Slow path SYN sent, seqno: %d\n", ntohl(tcphdr->tcp.seqno));
+    }
 
     return;
 }

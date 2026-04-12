@@ -60,6 +60,8 @@ int xdp_sock_prog(struct xdp_md *ctx)
 
     /* check Ethernet header */
     proto_type = parse_ethhdr(&nh, data_end, &eth);
+    if (proto_type == bpf_htons(ETH_P_ARP))
+        return XDP_PASS;
     if (unlikely(proto_type != bpf_htons(ETH_P_IP)))
         return XDP_DROP;
 
@@ -93,11 +95,31 @@ int xdp_gen_prog(struct xdp_md *ctx)
 SEC("xdp_egress")
 int xdp_egress_prog(struct xdp_md *ctx)
 {
+    xdp_egress_log("entered egress of entrance.c");
+    struct hdr_cursor nh = {0};
+    struct ethhdr *eth;
+    void *data, *data_end;
+    int proto_type;
+    
+    data = (void *)(long)ctx->data;
+    data_end = (void *)(long)ctx->data_end;
+    nh.pos = data;
+
+    /* check Ethernet header */
+    proto_type = parse_ethhdr(&nh, data_end, &eth);
+    if (proto_type != bpf_htons(ETH_P_ARP)) {
+        xdp_egress_log("passing an ARP packet");
+        return XDP_PASS;    
+    }
+
     int umem_id = ctx->umem_id;
     int *tran_idx = bpf_map_lookup_elem(&umem_id_tran_map, &umem_id);
-    if (unlikely(!tran_idx))
-        return XDP_DROP;
+    if (unlikely(!tran_idx)) {
+        xdp_egress_log_err("egress something that does not belong to etran umem");
+        return XDP_PASS;
+    }
     bpf_tail_call(ctx, &tran_xdp_egress_map, *tran_idx);
+    xdp_egress_log("after bpf_tail_call()");
     return XDP_DROP;
 }
 
@@ -106,3 +128,5 @@ int xdp_cpumap_prog(struct xdp_md *ctx)
 {
     return XDP_DROP;
 }
+
+char LICENSE[] SEC("license") = "GPL";

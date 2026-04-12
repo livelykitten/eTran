@@ -240,12 +240,12 @@ int xdp_egress_prog(struct xdp_md *ctx)
         goto redirect;
     }
 
-    #ifdef XDP_EGRESS_DEBUG
-    bpf_printk("");
-    xdp_egress_dump_eth(eth);
-    xdp_egress_dump_ip(iph);
-    xdp_egress_dump_tcp(tcph);
-    #endif
+    // #ifdef XDP_EGRESS_DEBUG
+    // bpf_printk("");
+    // xdp_egress_dump_eth(eth);
+    // xdp_egress_dump_ip(iph);
+    // xdp_egress_dump_tcp(tcph);
+    // #endif
     return XDP_TX;
 
 redirect:
