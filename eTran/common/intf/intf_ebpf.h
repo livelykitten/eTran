@@ -185,6 +185,11 @@ struct bpf_tcp_conn {
     // this value is updated when application calls open() or accept()
     __u8 qid2xsk[MAX_NIC_QUEUES];
 
+    /* xsk socket that this connenction belongs to */
+    /* This is to decouple NIC queue from TCP connection (by lively) */
+    /* and couple TCP connection with xsk */
+    __u8 xsk_fd;
+
 } __attribute__((packed, aligned(64)));
 
 struct ebpf_flow_tuple {

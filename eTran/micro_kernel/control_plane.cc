@@ -99,7 +99,7 @@ static int register_slow_path_map(unsigned int qid, int xsk_map_key, int proto);
 static void unregister_slow_path_map(unsigned int qid, int proto);
 
 /* manage RSS context for this application */
-static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, std::vector<unsigned int> &qids);
+// static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, std::vector<unsigned int> &qids);
 static void destroy_rss_context(struct app_ctx *actx);
 
 /* manage application resources */
@@ -309,56 +309,56 @@ static void destroy_rss_context(struct app_ctx *actx)
     actx->rss_ctx_id = 0;
 }
 
-static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, std::vector<unsigned int> &qids)
-{
-    std::string cmd;
-    // std::string res;
-    int weight[MAX_NIC_QUEUES] = {0};
+// static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, std::vector<unsigned int> &qids)
+// {
+//     std::string cmd;
+//     // std::string res;
+//     int weight[MAX_NIC_QUEUES] = {0};
 
-    // XXX: Homa doesn't support RSS, we can only support one Homa application with queue-level isolation
-    if (actx->proto != IPPROTO_TCP)
-    {
-        cmd = "ethtool -X " + etran_nic->_if_name + " equal " + std::to_string(nr_nic_queues);
-        return !exec_cmd(cmd);
-    }
+//     // XXX: Homa doesn't support RSS, we can only support one Homa application with queue-level isolation
+//     if (actx->proto != IPPROTO_TCP)
+//     {
+//         cmd = "ethtool -X " + etran_nic->_if_name + " equal " + std::to_string(nr_nic_queues);
+//         return !exec_cmd(cmd);
+//     }
 
-    for (unsigned int i = 0; i < nr_nic_queues; i++)
-    {
-        int qidx = qids[i];
-        weight[qidx] = 1;
-    }
-    // convert weight to string like '1 1 1 0 1 0 0'
-    std::string weight_str;
-    for (unsigned int i = 0; i < MAX_NIC_QUEUES; i++)
-    {
-        weight_str += std::to_string(weight[i]);
-        if (i != MAX_NIC_QUEUES - 1)
-            weight_str += " ";
-    }
-    // cmd = "ethtool -X " + etran_nic->_if_name + " context new weight " + weight_str;
-    cmd = "ethtool -X " + etran_nic->_if_name + " weight " + weight_str; // because having multiple contexts is not allowed in XL710
-    std::cout << cmd << std::endl;
-    // exec_cmd(cmd, res);
-    if (!exec_cmd(cmd))
-    {
-        fprintf(stderr, "Failed to configure NIC flow director\n");
-        return -1;
-    }
-    actx->rss_ctx_id = 0; // XL710 does not support multiple ctx
-    // size_t pos = res.find("New RSS context is ");
-    // if (pos != std::string::npos)
-    // {
-    //     actx->rss_ctx_id = std::stoi(res.substr(pos + 19));
-    //     printf("Created RSS context: %d\n", actx->rss_ctx_id);
-    // }
-    // else
-    // {
-    //     fprintf(stderr, "The required pattern was not found.\n");
-    //     return -1;
-    // }
+//     for (unsigned int i = 0; i < nr_nic_queues; i++)
+//     {
+//         int qidx = qids[i];
+//         weight[qidx] = 1;
+//     }
+//     // convert weight to string like '1 1 1 0 1 0 0'
+//     std::string weight_str;
+//     for (unsigned int i = 0; i < MAX_NIC_QUEUES; i++)
+//     {
+//         weight_str += std::to_string(weight[i]);
+//         if (i != MAX_NIC_QUEUES - 1)
+//             weight_str += " ";
+//     }
+//     // cmd = "ethtool -X " + etran_nic->_if_name + " context new weight " + weight_str;
+//     cmd = "ethtool -X " + etran_nic->_if_name + " weight " + weight_str; // because having multiple contexts is not allowed in XL710
+//     std::cout << cmd << std::endl;
+//     // exec_cmd(cmd, res);
+//     if (!exec_cmd(cmd))
+//     {
+//         fprintf(stderr, "Failed to configure NIC flow director\n");
+//         return -1;
+//     }
+//     actx->rss_ctx_id = 0; // XL710 does not support multiple ctx
+//     // size_t pos = res.find("New RSS context is ");
+//     // if (pos != std::string::npos)
+//     // {
+//     //     actx->rss_ctx_id = std::stoi(res.substr(pos + 19));
+//     //     printf("Created RSS context: %d\n", actx->rss_ctx_id);
+//     // }
+//     // else
+//     // {
+//     //     fprintf(stderr, "The required pattern was not found.\n");
+//     //     return -1;
+//     // }
 
-    return 0;
-}
+//     return 0;
+// }
 
 static void unregister_xsk_map(int xsk_fd, int xsk_map_key, int proto)
 {
@@ -444,6 +444,7 @@ static void free_app_resources(struct app_ctx *actx)
             return;
 
         epoll_ctl(xsk_epfd, EPOLL_CTL_DEL, xsk_socket__fd(etran_nic->_nic_queues[qid].xsk_info->xsk), nullptr);
+        printf("Removed xsk %d from NIC queue %d\n", xsk_socket__fd(etran_nic->_nic_queues[qid].xsk_info->xsk), qid);
 
         unregister_xsk_map(xsk_socket__fd(etran_nic->_nic_queues[qid].xsk_info->xsk), etran_nic->_nic_queues[qid].xsk_map_key, actx->proto);
 
@@ -644,6 +645,8 @@ static int register_slow_path_map(unsigned int qid, int xsk_map_key, int proto)
         return -EEXIST;
     }
 
+    printf("slow_path_map entry added, qid %d map_key %d proto %d", qid, xsk_map_key, proto);
+
     return 0;
 }
 
@@ -805,8 +808,15 @@ static int alloc_app_resources(struct register_request &req, int fd)
         if (getsockopt(xsk_socket__fd(etran_nic->_nic_queues[qid].xsk_info->xsk), SOL_XDP, XDP_OPTIONS, &xdp_opts, &optlen))
             goto err;
         actx->umem_id = xdp_opts.umem_id;
+        printf("NIC queue %d is assigned an xsk_fd %d\n", qid, xsk_socket__fd(etran_nic->_nic_queues[qid].xsk_info->xsk));
+
     }
     printf("init etran_nic->_nic_queues success\n");
+    for (unsigned int qid : qids) {
+        if (!etran_nic->_nic_queues[qid].xsk_info) {
+            printf("qid %d is assigned an xsk\n", qid);
+        }
+    }
 
     // TX/RX XSKs
     for (unsigned int i = 0; i < req.nr_app_threads; i++)
@@ -870,8 +880,8 @@ static int alloc_app_resources(struct register_request &req, int fd)
     }
     printf("register XSK map for application success\n");
     printf("req.nr_app_threads(%u), req.nr_nic_queues(%u)\n", req.nr_app_threads, req.nr_nic_queues);
-    if (create_rss_context(actx, req.nr_nic_queues, qids))
-        goto err;
+    // if (create_rss_context(actx, req.nr_nic_queues, qids))
+    //     goto err;
 
     if (thread_bcache_create(&actx->bpw, &actx->iobuffer))
         goto err;
@@ -1523,6 +1533,7 @@ static int poll_network(int timeout_ms)
     int nfds = epoll_wait(xsk_epfd, events, MAX_NIC_QUEUES, timeout_ms);
     if (!nfds)
         return 0;
+    printf("network poll succeeded: nfds %d\n", nfds);
     for (int i = 0; i < nfds; i++)
     {
         if (events[i].events & EPOLLERR)

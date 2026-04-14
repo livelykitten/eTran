@@ -45,9 +45,24 @@ struct {
     __uint(value_size, sizeof(int));
 } tran_xdp_egress_map SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} entry_cnt SEC(".maps");
+
 SEC("xdp_sock")
 int xdp_sock_prog(struct xdp_md *ctx)
 {
+    __u32 k = 0;
+    __u64 *v = bpf_map_lookup_elem(&entry_cnt, &k);
+    if (v)
+        (*v)++;
+
+    xdp_log("xdp_sock_prog() in entrance.c called");
+    xdp_log("ENT qid=%u cpu=%u", ctx->rx_queue_index, bpf_get_smp_processor_id());
+
     struct hdr_cursor nh = {0};
     struct ethhdr *eth;
     struct iphdr *iph;
@@ -88,6 +103,7 @@ int xdp_gen_prog(struct xdp_md *ctx)
     int *tran_idx = bpf_map_lookup_elem(&umem_id_tran_map, &umem_id);
     if (unlikely(!tran_idx))
         return XDP_DROP;
+    xdp_log("packet received. initiating tail call.");
     bpf_tail_call(ctx, &tran_xdp_gen_map, *tran_idx);
     return XDP_ABORTED;
 }

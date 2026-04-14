@@ -36,7 +36,7 @@ static void disable_napi_polling(std::string if_name)
 static int set_affinity(std::string pcie_name, std::string if_name)
 {
     std::string cmd;
-    cmd = "cat /proc/interrupts | grep " + pcie_name + " | grep " + if_name + " | awk 'NR > 1 {print $1}' | sed 's/://'";
+    cmd = "cat /proc/interrupts | grep " + pcie_name + " | grep " + if_name + " | awk '{print $1}' | sed 's/://'";
     std::string res;
     std::vector<int> irq_list;
     exec_cmd(cmd, res);

@@ -523,6 +523,8 @@ static int reg_tcp_conn_ebpf(struct tcp_connection *c, bool listen)
         ebpf_c.qid2xsk[c->tctx->actx->nic_qid[i]] = c->tctx->txrx_xsk_map_key[i];
     }
 
+    ebpf_c.xsk_fd = c->tctx->txrx_xsk_map_key[c->qid];
+
     key.local_ip = c->local_ip;
     key.remote_ip = c->remote_ip;
     key.local_port = c->local_port;
@@ -1426,6 +1428,7 @@ int tcp_packet(struct app_ctx *actx, struct pkt_tcp *p, uint32_t qid)
     }
     else
     {
+        printf("looking up tcp_listener\n");
         if ((l = tcp_listener_lookup(p)))
         {
 #ifdef DEBUG_TCP

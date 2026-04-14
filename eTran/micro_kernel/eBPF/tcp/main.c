@@ -255,7 +255,8 @@ redirect:
         return XDP_EGRESS_DROP;
     }
     // FIXME: fail to redirect?
-    return bpf_redirect_map(&xsks_map, c->qid2xsk[ctx->rx_queue_index], XDP_DROP);
+    // return bpf_redirect_map(&xsks_map, c->qid2xsk[ctx->rx_queue_index], XDP_DROP);
+    return bpf_redirect_map(&xsks_map, c->xsk_fd, XDP_DROP);
 
 err_pkt:
     xdp_egress_log_err("XDP_EGRESS drops packet");
@@ -265,6 +266,7 @@ err_pkt:
 SEC("xdp_sock")
 int xdp_sock_prog(struct xdp_md *ctx)
 {
+    xdp_log("xdp_sock_prog() in main.c called");
     int ret = 0;
     void *data, *data_end;
     struct meta_info *data_meta;
@@ -332,6 +334,8 @@ int xdp_sock_prog(struct xdp_md *ctx)
 
     // filter out SYN, SYN-ACK, RST packets
     if (unlikely(is_tcp_syn(tcph) || is_tcp_syn_ack(tcph) || is_tcp_rst(tcph))) {
+        xdp_log("is_tcp_syn(tcph) || is_tcp_syn_ack(tcph) || is_tcp_rst(tcph)");
+        xdp_log("%d %d %d", is_tcp_syn(tcph), is_tcp_syn_ack(tcph), is_tcp_rst(tcph));
         goto slowpath;
     }
 
@@ -345,6 +349,13 @@ int xdp_sock_prog(struct xdp_md *ctx)
     key.remote_ip = bpf_ntohl(iph->saddr);
     key.local_port = bpf_ntohs(tcph->dest);
     key.remote_port = bpf_ntohs(tcph->source);
+
+    /* Get target CPU id, using  */
+    /* the target CPU id is likely to be the same as current_cpu */
+
+    /* If target_cpu != current_cpu, redirect it using cpumap */
+
+    /* Otherwise, continue along the original logic */
 
     c = bpf_map_lookup_elem(&bpf_tcp_conn_map, &key);
     if (unlikely(!c)) {
@@ -364,7 +375,8 @@ int xdp_sock_prog(struct xdp_md *ctx)
     ret = tcp_rx_process(tcph, c, pkt_len, data_meta, (iph->tos & IPTOS_ECN_CE) == IPTOS_ECN_CE, cpu);
     
     if (likely(ret == XDP_REDIRECT && qid < MAX_NIC_QUEUES)) {
-        return bpf_redirect_map(&xsks_map, c->qid2xsk[qid], XDP_DROP);
+        // return bpf_redirect_map(&xsks_map, c->qid2xsk[qid], XDP_DROP);
+        return bpf_redirect_map(&xsks_map, c->xsk_fd, XDP_DROP);
     }
 
     return XDP_DROP;

@@ -36,6 +36,16 @@
 #define xdp_log_panic(fmt, ...)
 #endif
 
+#ifdef XDP_DEBUG
+#define xdp_log_locked(fmt, ...) 
+#define xdp_log_err_locked(fmt, ...) 
+#define xdp_log_panic_locked(fmt, ...) 
+#else
+#define xdp_log_locked(fmt, ...) bpf_printk("XDP: " fmt, ##__VA_ARGS__)
+#define xdp_log_err_locked(fmt, ...) bpf_printk("XDP ERROR: " fmt, ##__VA_ARGS__)
+#define xdp_log_panic_locked(fmt, ...) bpf_printk("XDP PANIC: " fmt, ##__VA_ARGS__)
+#endif
+
 #ifdef XDP_EGRESS_DEBUG
 #define xdp_egress_log(fmt, ...) bpf_printk("XDP_EGRESS: " fmt, ##__VA_ARGS__)
 #define xdp_egress_log_err(fmt, ...) bpf_printk("XDP_EGRESS ERROR: " fmt, ##__VA_ARGS__)
@@ -44,6 +54,16 @@
 #define xdp_egress_log(fmt, ...)
 #define xdp_egress_log_err(fmt, ...)
 #define xdp_egress_log_panic(fmt, ...)
+#endif
+
+#ifdef XDP_EGRESS_DEBUG
+#define xdp_egress_log_locked(fmt, ...) 
+#define xdp_egress_log_err_locked(fmt, ...) 
+#define xdp_egress_log_panic_locked(fmt, ...) 
+#else
+#define xdp_egress_log_locked(fmt, ...) bpf_printk("XDP_EGRESS: " fmt, ##__VA_ARGS__)
+#define xdp_egress_log_err_locked(fmt, ...) bpf_printk("XDP_EGRESS ERROR: " fmt, ##__VA_ARGS__)
+#define xdp_egress_log_panic_locked(fmt, ...) bpf_printk("XDP_EGRESS PANIC: " fmt, ##__VA_ARGS__)
 #endif
 
 #ifdef XDP_GEN_DEBUG

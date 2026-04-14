@@ -13,8 +13,8 @@
 #define TCP_ACK_HEADER_CUTOFF (int)(XDP_GEN_PKT_SIZE - sizeof(struct ethhdr) - sizeof(struct iphdr) - sizeof(struct tcphdr) - TS_OPT_SIZE)
 
 #if defined(XDP_DEBUG) || defined(XDP_EGRESS_DEBUG) || defined(XDP_GEN_DEBUG)
-#define TCP_LOCK(c)
-#define TCP_UNLOCK(c)
+#define TCP_LOCK(c) bpf_spin_lock(&c->lock)
+#define TCP_UNLOCK(c) bpf_spin_unlock(&c->lock)
 #else
 // #define TCP_LOCK(c)
 // #define TCP_UNLOCK(c)
@@ -377,7 +377,7 @@ static __always_inline int tcp_tx_process(struct iphdr *iph, struct tcphdr *tcph
     if (unlikely(data_meta->tx.flag & FLAG_TO)) {
         if (!c->tx_sent) {
             TCP_UNLOCK(c);
-            xdp_egress_log("Timeout but no data to retransmit");
+            xdp_egress_log_locked("Timeout but no data to retransmit");
             return XDP_DROP;
         }
         data_meta->rx.go_back_pos = fast_retransmit(c, cc);
@@ -401,19 +401,19 @@ static __always_inline int tcp_tx_process(struct iphdr *iph, struct tcphdr *tcph
         if (c->tx_pending == 0)
             wnd_upd = true;
         c->rx_avail += rx_bump;
-        xdp_egress_log("Rxwnd is updated from %u to %u", min((c->rx_avail - rx_bump) >> TCP_WND_SCALE, 0xFFFF), c->rx_avail);
+        xdp_egress_log_locked("Rxwnd is updated from %u to %u", min((c->rx_avail - rx_bump) >> TCP_WND_SCALE, 0xFFFF), c->rx_avail);
     }
 
     /* Pure sync packet from userspace, drop or send a extra window update */
     if (unlikely(data_meta->tx.flag & FLAG_SYNC)) {
-        xdp_egress_log("pure ctrl signal");
+        xdp_egress_log_locked("pure ctrl signal");
         if (wnd_upd) {
             /* receive buffer freed up from empty, need to send out a window update, if
              * we're not sending anyways. */
             fill_tcp_hdr(iph, tcph, c, ref_ts, data_end, TCP_FLAG_ACK);
             fill_ip_hdr(iph, 0, false);
             TCP_UNLOCK(c);
-            xdp_egress_log("Rxwnd is updated from empty to %u, send extra ack", min(c->rx_avail >> TCP_WND_SCALE, 0xFFFF));
+            xdp_egress_log_locked("Rxwnd is updated from empty to %u, send extra ack", min(c->rx_avail >> TCP_WND_SCALE, 0xFFFF));
             return XDP_TX;
         }
         TCP_UNLOCK(c);
@@ -424,7 +424,7 @@ static __always_inline int tcp_tx_process(struct iphdr *iph, struct tcphdr *tcph
     // but there are pending packets in the queue, simply drop them
     if (unlikely(tx_pos != c->tx_next_pos)) {
         TCP_UNLOCK(c);
-        xdp_egress_log("tx_pos(%u) != c->tx_next_pos(%u)", tx_pos, c->tx_next_pos);
+        xdp_egress_log_locked("tx_pos(%u) != c->tx_next_pos(%u)", tx_pos, c->tx_next_pos);
         // bpf_printk("tx_pos(%u) != c->tx_next_pos(%u)", tx_pos, c->tx_next_pos);
         return XDP_DROP;
     }
@@ -526,7 +526,7 @@ static __always_inline int tcp_valid_rxack(struct bpf_tcp_conn *c, __u32 ack_seq
         *bump = ack_seq - exp_ack_first;
     }
 
-    xdp_log("exp_ack_first(%u), exp_ack_last(%u), ack_seq(%u), *bump(%u)", exp_ack_first, exp_ack_last, ack_seq, *bump);
+    xdp_log_locked("exp_ack_first(%u), exp_ack_last(%u), ack_seq(%u), *bump(%u)", exp_ack_first, exp_ack_last, ack_seq, *bump);
 
     return 0;
 }
@@ -557,7 +557,7 @@ static __always_inline int tcp_valid_rxseq_ooo(struct bpf_tcp_conn *c, __u32 seq
     __u32 pkt_seq_first = seq;
     __u32 pkt_seq_last = seq + payload_len;
 
-    xdp_log("exp_seq_first(%u), exp_seq_last(%u), pkt_seq_first(%u), pkt_seq_last(%u)", exp_seq_first, exp_seq_last, pkt_seq_first, pkt_seq_last);
+    xdp_log_locked("exp_seq_first(%u), exp_seq_last(%u), pkt_seq_first(%u), pkt_seq_last(%u)", exp_seq_first, exp_seq_last, pkt_seq_first, pkt_seq_last);
 
     bool valid = seq_in_range(pkt_seq_first, exp_seq_first, exp_seq_last, false) ||
                  seq_in_range(pkt_seq_last, exp_seq_first, exp_seq_last, true) ||
@@ -580,7 +580,7 @@ static __always_inline int tcp_valid_rxseq_ooo(struct bpf_tcp_conn *c, __u32 seq
         *trim_end = pkt_seq_last - exp_seq_last;
     }
 
-    xdp_log("*trim_start(%u), *trim_end(%u)", *trim_start, *trim_end);
+    xdp_log_locked("*trim_start(%u), *trim_end(%u)", *trim_start, *trim_end);
 
     return 0;
 }
@@ -732,12 +732,12 @@ static __always_inline int tcp_rx_process(struct tcphdr *tcph, struct bpf_tcp_co
             /* duplicate ack ? */
             else if (unlikely(c->tx_sent && payload_len == 0 && (c->rx_remote_avail == ((bpf_ntohs(tcph->window)) << TCP_WND_SCALE)) && ++c->rx_dupack_cnt == 3)) {
                 go_back_pos = fast_retransmit(c, cc);
-                xdp_log("Duplicate ACK triggers fast retransmission");
+                xdp_log_locked("Duplicate ACK triggers fast retransmission");
                 goto unlock;
             }
         } else {
             trigger_ack = false;
-            xdp_log_err("Bad ack");
+            xdp_log_err_locked("Bad ack");
             goto unlock;
         }
     }
@@ -747,7 +747,7 @@ static __always_inline int tcp_rx_process(struct tcphdr *tcph, struct bpf_tcp_co
     __u32 trim_start, trim_end;
     if (unlikely(tcp_valid_rxseq_ooo(c, seq, payload_len, &trim_start, &trim_end))) {
         trigger_ack = false;
-        xdp_log_err("Bad seq");
+        xdp_log_err_locked("Bad seq");
         goto unlock;
     }
 
@@ -765,23 +765,23 @@ static __always_inline int tcp_rx_process(struct tcphdr *tcph, struct bpf_tcp_co
     /* check if we can add it to the out of order interval */
     if (unlikely(seq != c->rx_next_seq)) {
         if (!payload_len) goto unlock;
-        xdp_log("OOO packet, seq(%u), c->rx_next_seq(%u)", seq, c->rx_next_seq);
+        xdp_log_locked("OOO packet, seq(%u), c->rx_next_seq(%u)", seq, c->rx_next_seq);
         if (c->rx_ooo_len == 0) {
             c->rx_ooo_start = seq;
             c->rx_ooo_len = payload_len;
-            xdp_log("New segment, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
+            xdp_log_locked("New segment, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
         } else if (seq + payload_len == c->rx_ooo_start) {
             c->rx_ooo_start = seq;
             c->rx_ooo_len += payload_len;
-            xdp_log("Merge segment, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
+            xdp_log_locked("Merge segment, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
         } else if (c->rx_ooo_start + c->rx_ooo_len == seq) {
             c->rx_ooo_len += payload_len;
-            xdp_log("Merge segment, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
+            xdp_log_locked("Merge segment, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
         } else {
             // unfortunately, we can't accept this payload
             payload_len = 0;
             data_meta->rx.plen = POISON_16;
-            xdp_log("Drop packet, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
+            xdp_log_locked("Drop packet, ooo_start(%u), ooo_len(%u)", c->rx_ooo_start, c->rx_ooo_len);
         }
         // mark this packet is an out-of-order segment
         data_meta->rx.ooo_bump = OOO_SEGMENT_MASK;
@@ -793,7 +793,7 @@ static __always_inline int tcp_rx_process(struct tcphdr *tcph, struct bpf_tcp_co
         __u32 trim_start, trim_end;
         if (unlikely(tcp_valid_rxseq(c, seq, payload_len, &trim_start, &trim_end))) {
             trigger_ack = false;
-            xdp_log_err("Bad seq");
+            xdp_log_err_locked("Bad seq");
             goto unlock;
         }
 
@@ -803,7 +803,7 @@ static __always_inline int tcp_rx_process(struct tcphdr *tcph, struct bpf_tcp_co
         data_meta->rx.plen = payload_len;
         data_meta->rx.rx_pos = c->rx_next_pos;
 
-        xdp_log("Good seq, payload_off(%u), payload_len(%u), trim_start(%u), trim_end(%u)", 
+        xdp_log_locked("Good seq, payload_off(%u), payload_len(%u), trim_start(%u), trim_end(%u)", 
             payload_off, payload_len, trim_start, trim_end);
 
     #endif
@@ -856,7 +856,7 @@ static __always_inline int tcp_rx_process(struct tcphdr *tcph, struct bpf_tcp_co
 
                 // accept out-of-order segments
                 if (c->rx_ooo_len && c->rx_ooo_start == c->rx_next_seq) {
-                    xdp_log("c->rx_ooo_len(%u), c->rx_ooo_start(%u), c->rx_next_seq(%u)", c->rx_ooo_len, c->rx_ooo_start, c->rx_next_seq);
+                    xdp_log_locked("c->rx_ooo_len(%u), c->rx_ooo_start(%u), c->rx_next_seq(%u)", c->rx_ooo_len, c->rx_ooo_start, c->rx_next_seq);
                     rx_bump += c->rx_ooo_len;
                     c->rx_avail -= c->rx_ooo_len;
                     c->rx_next_pos += c->rx_ooo_len;
@@ -867,7 +867,7 @@ static __always_inline int tcp_rx_process(struct tcphdr *tcph, struct bpf_tcp_co
                     c->rx_ooo_len = 0;
                     // out-of-order segment is processed
                     data_meta->rx.ooo_bump = OOO_FIN_MASK;
-                    xdp_log("Out-of-order segment is processed");
+                    xdp_log_locked("Out-of-order segment is processed");
                 }
             }
         }
@@ -888,11 +888,11 @@ unlock:
         drop = false;
         
         data_meta->rx.xsk_budget_avail = xsk_budget_avail(c);
-        xdp_log("xsk_budget_avail(%u)", data_meta->rx.xsk_budget_avail);
+        xdp_log_locked("xsk_budget_avail(%u)", data_meta->rx.xsk_budget_avail);
         if (tx_bump)
             data_meta->rx.ack_bytes = tx_bump;
         else if (unlikely(go_back_pos)) {
-            xdp_log("go_back_pos(%u)", go_back_pos);
+            xdp_log_locked("go_back_pos(%u)", go_back_pos);
             data_meta->rx.go_back_pos = go_back_pos;
             data_meta->rx.go_back_pos |= RECOVERY_MASK;
         }
@@ -915,7 +915,7 @@ out:
 
     if (trigger_ack) {
         // TODO
-        xdp_log("trigger_ack");
+        xdp_log_locked("trigger_ack");
         #ifdef ACK_COALESCING
         // make verifier happy
         if (likely(cpu < MAX_CPU) && prev_conn[cpu] == NULL_CONN) {
