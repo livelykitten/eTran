@@ -528,11 +528,19 @@ static inline void kick_tx(int xsk_fd, struct xsk_ring_prod *tx)
 // shared memory version of xsk_ring_prod__needs_wakeup() for fill ring
 XDP_ALWAYS_INLINE int eTran_fq__needs_wakeup(const struct xsk_ring_prod *r, uintptr_t offset)
 {
+    printf("r->flags = %p\n", r->flags);
+    printf("offset: = 0x%lx\n", offset);
+    printf("rebased flags = %p\n", (void *)((uintptr_t)r->flags + offset));
+    printf("*rebased flags = 0x%x\n", *(__u32 *)((uintptr_t)r->flags + offset));
+    printf("XDP_RING_NEED_WAKEUP = 0x%x\n", XDP_RING_NEED_WAKEUP);
     __u32 *flags = reinterpret_cast<__u32*>(reinterpret_cast<uintptr_t>(r->flags) + offset);
 	return *flags & XDP_RING_NEED_WAKEUP;
 }
 static inline void kick_fq(int xsk_fd, struct xsk_ring_prod *fq, uintptr_t offset)
 {
-    if (eTran_fq__needs_wakeup(fq, offset))
-        recvfrom(xsk_fd, NULL, 0, MSG_DONTWAIT, NULL, NULL);
+    if (eTran_fq__needs_wakeup(fq, offset)) {
+        errno = 0;
+        int ret = recvfrom(xsk_fd, NULL, 0, MSG_DONTWAIT, NULL, NULL);
+        printf("kick recvfrom ret=%d errno=%d (%s)\n", ret, errno, strerror(errno));
+    }
 }

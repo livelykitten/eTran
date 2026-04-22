@@ -29,6 +29,17 @@ struct
     __uint(value_size, sizeof(struct slow_path_info));
 } slow_path_map SEC(".maps");
 
+
+// key: local_port
+// value: struct slow_path_info
+// struct
+// {
+//     __uint(type, BPF_MAP_TYPE_ARRAY);
+//     __uint(max_entries, MAX_NIC_QUEUES);
+//     __uint(key_size, sizeof(__u16));
+//     __uint(value_size, sizeof(struct slow_path_info));
+// } slow_path_map_by_port SEC(".maps");
+
 struct
 {
     __uint(type, BPF_MAP_TYPE_XSKMAP);
@@ -255,8 +266,8 @@ redirect:
         return XDP_EGRESS_DROP;
     }
     // FIXME: fail to redirect?
-    // return bpf_redirect_map(&xsks_map, c->qid2xsk[ctx->rx_queue_index], XDP_DROP);
-    return bpf_redirect_map(&xsks_map, c->xsk_fd, XDP_DROP);
+    return bpf_redirect_map(&xsks_map, c->qid2xsk[ctx->rx_queue_index], XDP_DROP);
+    // return bpf_redirect_map(&xsks_map, c->xsk_fd, XDP_DROP);
 
 err_pkt:
     xdp_egress_log_err("XDP_EGRESS drops packet");

@@ -100,7 +100,7 @@ static void unregister_slow_path_map(unsigned int qid, int proto);
 
 /* manage RSS context for this application */
 // static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, std::vector<unsigned int> &qids);
-static void destroy_rss_context(struct app_ctx *actx);
+// static void destroy_rss_context(struct app_ctx *actx);
 
 /* manage application resources */
 static int alloc_app_resources(struct register_request &req, int fd);
@@ -238,39 +238,39 @@ int record_port(struct app_ctx *actx, uint16_t local_port, uint16_t remote_port)
     if (actx->proto != IPPROTO_TCP)
         return 0;
 
-    std::string cmd;
-    std::string res;
+    // std::string cmd;
+    // std::string res;
 
     /* only support TCP */
-    if (!remote_port && rule_dst_ports.find(local_port) == rule_dst_ports.end()){
-        cmd = "ethtool -U " + etran_nic->_if_name + " flow-type tcp4 dst-port " + std::to_string(local_port) + " context " + std::to_string(actx->rss_ctx_id);
-        rule_dst_ports.insert(local_port);
-    }
-    else if (rule_src_ports.find(remote_port) == rule_src_ports.end()){
-        cmd = "ethtool -U " + etran_nic->_if_name + " flow-type tcp4 src-port " + std::to_string(remote_port) + " context " + std::to_string(actx->rss_ctx_id);
-        rule_src_ports.insert(remote_port);
-    }
-    if (cmd.empty())
-        return 0;
-    exec_cmd(cmd, res);
-    if (res.empty())
-    {
-        fprintf(stderr, "Failed to configure NIC flow director(%s)\n", cmd.c_str());
-        return -1;
-    }
+    // if (!remote_port && rule_dst_ports.find(local_port) == rule_dst_ports.end()){
+    //     cmd = "ethtool -U " + etran_nic->_if_name + " flow-type tcp4 dst-port " + std::to_string(local_port) + " context " + std::to_string(actx->rss_ctx_id);
+    //     rule_dst_ports.insert(local_port);
+    // }
+    // else if (rule_src_ports.find(remote_port) == rule_src_ports.end()){
+    //     cmd = "ethtool -U " + etran_nic->_if_name + " flow-type tcp4 src-port " + std::to_string(remote_port) + " context " + std::to_string(actx->rss_ctx_id);
+    //     rule_src_ports.insert(remote_port);
+    // }
+    // if (cmd.empty())
+    //     return 0;
+    // exec_cmd(cmd, res);
+    // if (res.empty())
+    // {
+    //     fprintf(stderr, "Failed to configure NIC flow director(%s)\n", cmd.c_str());
+    //     return -1;
+    // }
 
-    size_t pos = res.find("Added rule with ID ");
-    if (pos != std::string::npos)
-    {
-        actx->flow_director_rules.push_back({std::stoi(res.substr(pos + 19)), remote_port ? remote_port : local_port, remote_port ? true : false});
-    }
-    else
-    {
-        fprintf(stderr, "The required pattern was not found.\n");
-        return -1;
-    }
+    // size_t pos = res.find("Added rule with ID ");
+    // if (pos != std::string::npos)
+    // {
+    //     actx->flow_director_rules.push_back({std::stoi(res.substr(pos + 19)), remote_port ? remote_port : local_port, remote_port ? true : false});
+    // }
+    // else
+    // {
+    //     fprintf(stderr, "The required pattern was not found.\n");
+    //     return -1;
+    // }
 
-    std::cout << cmd << std::endl;
+    // std::cout << cmd << std::endl;
 
     return 0;
 }
@@ -280,34 +280,34 @@ int unrecord_port(struct app_ctx *actx, uint16_t port)
     actx->ports.erase(port);
     if (actx->proto != IPPROTO_TCP)
         return 0;
-    for (auto it = actx->flow_director_rules.begin(); it != actx->flow_director_rules.end(); it++)
-    {
-        std::string cmd;
-        std::string res;
-        cmd = "ethtool -U " + etran_nic->_if_name + " delete " + std::to_string(it->id);
-        if (it->source)
-            rule_src_ports.erase(it->port);
-        else
-            rule_dst_ports.erase(it->port);
-        std::cout << cmd << std::endl;
-        exec_cmd(cmd);
-    }
+    // for (auto it = actx->flow_director_rules.begin(); it != actx->flow_director_rules.end(); it++)
+    // {
+    //     std::string cmd;
+    //     std::string res;
+    //     cmd = "ethtool -U " + etran_nic->_if_name + " delete " + std::to_string(it->id);
+    //     if (it->source)
+    //         rule_src_ports.erase(it->port);
+    //     else
+    //         rule_dst_ports.erase(it->port);
+    //     std::cout << cmd << std::endl;
+    //     exec_cmd(cmd);
+    // }
 
-    actx->flow_director_rules.clear();
+    // actx->flow_director_rules.clear();
 
     return 0;
 }
 
-static void destroy_rss_context(struct app_ctx *actx)
-{
-    if (actx->rss_ctx_id == 0 || actx->proto != IPPROTO_TCP)
-        return;
-    std::string cmd;
-    cmd = "ethtool -X " + etran_nic->_if_name + " delete context " + std::to_string(actx->rss_ctx_id);
-    if (exec_cmd(cmd))
-        printf("Destroy RSS context success: %d\n", actx->rss_ctx_id);
-    actx->rss_ctx_id = 0;
-}
+// static void destroy_rss_context(struct app_ctx *actx)
+// {
+//     if (actx->rss_ctx_id == 0 || actx->proto != IPPROTO_TCP)
+//         return;
+//     std::string cmd;
+//     cmd = "ethtool -X " + etran_nic->_if_name + " delete context " + std::to_string(actx->rss_ctx_id);
+//     if (exec_cmd(cmd))
+//         printf("Destroy RSS context success: %d\n", actx->rss_ctx_id);
+//     actx->rss_ctx_id = 0;
+// }
 
 // static int create_rss_context(struct app_ctx *actx, unsigned int nr_nic_queues, std::vector<unsigned int> &qids)
 // {
@@ -408,11 +408,16 @@ static int register_xsk_map(int xsk_fd, int xsk_map_key, int proto)
         return -EINVAL;
     }
 
-    if (bpf_map_update_elem(xsk_map_fd, &xsk_map_key, &xsk_fd, BPF_NOEXIST) == EEXIST)
+    printf("control_plane.cc:register_xsk_map(): calling update with key: %d, value %d\n", xsk_map_key, xsk_fd);
+    int ret;
+    if ((ret = bpf_map_update_elem(xsk_map_fd, &xsk_map_key, &xsk_fd, BPF_NOEXIST)) != 0)
     {
+        fprintf(stderr, "ERROR: xsk map update failed, ret: %d, errno: %s\n", ret, strerror(errno));
         fprintf(stderr, "ERROR: xsk map key %d already exists\n", xsk_map_key);
-        return -EEXIST;
+        return -errno;
     }
+
+    printf("control_plane.cc:register_xsk_map(): xsks_map updated\n");
 
     if (proto == IPPROTO_HOMA)
         homa_monitor_xsk_map[xsk_map_key] = xsk_fd;
@@ -434,7 +439,7 @@ static void free_app_resources(struct app_ctx *actx)
         free_homa_resources(actx);
     }
 
-    destroy_rss_context(actx);
+    // destroy_rss_context(actx);
 
     for (unsigned int i = 0; i < actx->nr_nic_queues; i++)
     {
@@ -1498,11 +1503,49 @@ static void process_packet(int xsk_fd)
 
 static int poll_network(int timeout_ms)
 {
+    static __u32 prev_fq_prod = 0;
+    static __u32 prev_fq_cons = 0;
+
+    static __u32 prev_cq_prod = 0;
+    static __u32 prev_cq_cons = 0;
     /* traverse all NIC queues */
     for (unsigned int i = 0; i < etran_nic->_num_queues; i++)
     {
         if (!etran_nic->_nic_queues[i].xsk_info)
             continue;
+
+        // struct app_ctx *actx = etran_nic->_nic_queues[i].actx;
+        // struct xsk_ring_prod *fq = &actx->bpw.bp->fq[i];
+        // if (xsk_ring_prod__needs_wakeup(fq)) {
+        //     printf("Qid %d FQ wakeup needed!\n", i);
+        // }
+
+        // check fq
+        {
+            struct xsk_ring_prod *fq = &actx->bpw.bp->fq[i];
+            __u32 prod = *fq->producer;
+            __u32 cons = *fq->consumer;
+            if (prev_fq_prod != prod || prev_fq_cons != cons) {
+                printf("Qid %d FQ updated: prod %u cons %u\n", i, prod, cons);
+                printf("Qid %d FQ postable slots: %u\n", i, xsk_prod_nb_free(fq, fq->size));
+                prev_fq_prod = prod;
+                prev_fq_cons = cons;
+            }
+        }
+
+        // check cq
+        {
+            struct app_ctx *actx = etran_nic->_nic_queues[i].actx;
+            struct xsk_ring_cons *cq = &actx->bpw.bp->cq[i];
+            __u32 prod = *cq->producer;
+            __u32 cons = *cq->consumer;
+            if (prev_cq_prod != prod || prev_cq_cons != cons) {
+                printf("Qid %d CQ updated: prod %u cons %u\n", i, prod, cons);
+                printf("Qid %d CQ available slots: %u\n", i, xsk_cons_nb_avail(cq, cq->size));
+                prev_cq_prod = prod;
+                prev_cq_cons = cons;
+            }
+        }
 
         // reclaim completion buffers
         if (etran_nic->_nic_queues[i].xsk_info->outstanding)
@@ -1522,6 +1565,7 @@ static int poll_network(int timeout_ms)
             }
             if (rcvd)
             {
+                printf("Qid %d cq refilled\n", i);
                 xsk_ring_cons__release(cq, rcvd);
                 etran_nic->_nic_queues[i].xsk_info->outstanding -= rcvd;
             }

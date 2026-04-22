@@ -322,7 +322,7 @@ int xdp_sock_prog(struct xdp_md *ctx)
         return XDP_DROP;
     #endif
 
-    unsigned int current_cpu = bpf_get_smp_processor_id();
+    unsigned int current_cpu = bpf_get_smp_processor_id(); // get the CPU id that is processing the packet
     CHECK_AND_DROP_LOG(current_cpu >= MAX_CPU || current_cpu != ctx->rx_queue_index, "CPU Mapping");
 
     CHECK_AND_DROP_LOG(bpf_xdp_adjust_meta(ctx, -(int)sizeof(*data_meta)) != 0, "xdp_adjust_meta failed");

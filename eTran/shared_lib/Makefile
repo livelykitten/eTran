@@ -11,7 +11,7 @@ LIBBPF_LIBXDP_DIR:= ../../lib/install/include
 # $(OBJECT_LIBXDP) $(OBJECT_LIBBPF)
 include ./common_mk/common.mk
 
-CFLAGS := -Wall -Werror -fno-strict-aliasing -O3 -g -Wno-pointer-arith
+CFLAGS := -Wall -Werror -fno-strict-aliasing -O3 -g -Wno-pointer-arith -DDEBUG
 INCLUDE_DIR := -I$(COMMON_DIR) -I$(APP_LIB)/include -I$(LIBBPF_LIBXDP_DIR)
 LDLIBS := -lpthread -ltcmalloc -lrt -lelf -lz
 

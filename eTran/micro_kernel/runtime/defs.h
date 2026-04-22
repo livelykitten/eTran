@@ -15,7 +15,7 @@
 
 #define SUPPORT_PROTO(proto) ((proto) == IPPROTO_TCP || (proto) == IPPROTO_HOMA)
 
-// #define DEBUG_TCP
+#define DEBUG_TCP
 
 const std::string ENTRANCE_BPF_OBJ_PATH = "eBPF/entrance/entrance.o";
 const std::string TCP_BPF_OBJ_PATH = "eBPF/tcp/main.o";

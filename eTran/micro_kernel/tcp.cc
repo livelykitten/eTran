@@ -184,7 +184,7 @@ void _tcp_connection_close(struct tcp_connection *c, enum connection_status stat
     /* this struct is created for listener */
     if (c->type == TCP_CONN_TYPE_FAKE)
     {
-        // unrecord_port(c->tctx->actx, c->local_port);
+        unrecord_port(c->tctx->actx, c->local_port);
         free_port(c->local_port);
         std::lock_guard<std::mutex> lock(tcp_connections_lock);
         tcp_connections.erase(flow_tuple(c->remote_ip, c->remote_port, c->local_ip, c->local_port));
@@ -206,7 +206,7 @@ void _tcp_connection_close(struct tcp_connection *c, enum connection_status stat
     /* step3: free port if this connection is created through connect() */
     if (!c->listener)
     {
-        // unrecord_port(c->tctx->actx, c->local_port);
+        unrecord_port(c->tctx->actx, c->local_port);
         free_port(c->local_port);
     }
 
@@ -1140,6 +1140,7 @@ int poll_tcp_handshake_events(void)
 // external functions
 int tcp_listen(struct app_ctx_per_thread *tctx, struct appout_tcp_listen_t *tcp_listen_msg_in)
 {
+    printf("tcp listen invoked\n");
     struct tcp_connection *c;
     struct tcp_listener *listener;
     uint16_t port;
@@ -1304,7 +1305,7 @@ int tcp_open(struct app_ctx_per_thread *tctx, struct appout_tcp_open_t *tcp_open
             return -1;
         }
         local_port = ret;
-        // record_port(tctx->actx, local_port, remote_port);
+        record_port(tctx->actx, local_port, remote_port);
     }
     c->release = tcp_connection_close;
 
@@ -1342,6 +1343,7 @@ int tcp_open(struct app_ctx_per_thread *tctx, struct appout_tcp_open_t *tcp_open
 
 int tcp_bind(struct app_ctx_per_thread *tctx, struct appout_tcp_bind_t *tcp_bind_msg_in)
 {
+    printf("tcp_bind() started\n");
     struct tcp_connection *c;
 
     opaque_ptr opaque_connection = tcp_bind_msg_in->opaque_connection;
@@ -1353,7 +1355,7 @@ int tcp_bind(struct app_ctx_per_thread *tctx, struct appout_tcp_bind_t *tcp_bind
     (void)_local_ip;
 
     c = find_tcp_conn_slowpath(opaque_connection);
-    if (c)
+    if (c) 
         return -EADDRINUSE;
 
     c = new tcp_connection();
@@ -1368,19 +1370,23 @@ int tcp_bind(struct app_ctx_per_thread *tctx, struct appout_tcp_bind_t *tcp_bind
             if (tctx->actx->ports.find(local_port) != tctx->actx->ports.end())
             {
                 // ok, this port belongs to this application
+                printf("tcp_bind(): port check passed: port %d belongs to actx fd %d\n", local_port, tctx->actx->fd);
             }
             else
             {
                 // this port is in use by other applications
+                printf("tcp_bind(): port check failed: port %d does not belong to actx fd %d\n", local_port, tctx->actx->fd);
                 delete c;
                 return -EADDRINUSE;
             }
         }
         else
         {
+            printf("tcp_bind(): reuseport is false\n");
             delete c;
             return -EADDRINUSE;
         }
+        printf("tcp_bind(): end of if alloc_port\n");
     }
 
     c->type = TCP_CONN_TYPE_FAKE;
@@ -1395,7 +1401,7 @@ int tcp_bind(struct app_ctx_per_thread *tctx, struct appout_tcp_bind_t *tcp_bind
     c->opaque_connection = opaque_connection;
     c->flags = 0;
 
-    // record_port(c->tctx->actx, c->local_port, 0);
+    record_port(c->tctx->actx, c->local_port, 0);
 
     reg_tcp_conn_slowpath(c);
 
@@ -1537,32 +1543,43 @@ void process_tcp_cmd(struct app_ctx_per_thread *tctx, lrpc_msg *msg_in)
     struct appout_tcp_bind_t *tcp_bind_msg_in;
     struct appout_tcp_close_t *tcp_close_msg_in;
     struct appout_tcp_accept_t *tcp_accept_msg_in;
+    unsigned int ret;
     switch (msg_in->cmd)
     {
     case APPOUT_TCP_OPEN:
         tcp_open_msg_in = (struct appout_tcp_open_t *)msg_in->data;
-        if (tcp_open(tctx, tcp_open_msg_in))
+        if ((ret = tcp_open(tctx, tcp_open_msg_in))) {
+            fprintf(stderr, "tcp_open() failed, ret: %x\n", ret);
             notify_app_tcp_conn_open(tctx, tcp_open_msg_in->opaque_connection, tcp_open_msg_in->fd, -1, nullptr);
+        }
         break;
     case APPOUT_TCP_BIND:
         tcp_bind_msg_in = (struct appout_tcp_bind_t *)msg_in->data;
-        if (tcp_bind(tctx, tcp_bind_msg_in))
+        if ((ret = tcp_bind(tctx, tcp_bind_msg_in))) {
+            fprintf(stderr, "tcp_bind() failed, ret: %x\n", ret);
             notify_app_tcp_status_bind(tctx, tcp_bind_msg_in->opaque_connection, tcp_bind_msg_in->fd, -1);
+        }
         break;
     case APPOUT_TCP_LISTEN:
         tcp_listen_msg_in = (struct appout_tcp_listen_t *)msg_in->data;
-        if (tcp_listen(tctx, tcp_listen_msg_in))
+        if ((ret = tcp_listen(tctx, tcp_listen_msg_in))) {
+            fprintf(stderr, "tcp_liste () failed, ret: %x\n", ret);
             notify_app_tcp_status_listen(tctx, tcp_listen_msg_in->opaque_listener, tcp_listen_msg_in->fd, -1);
+        }
         break;
     case APPOUT_TCP_ACCEPT:
         tcp_accept_msg_in = (struct appout_tcp_accept_t *)msg_in->data;
-        if (tcp_accept(tctx, tcp_accept_msg_in))
+        if ((ret = tcp_accept(tctx, tcp_accept_msg_in))) {
+            fprintf(stderr, "tcp_accept() failed, ret: %x\n", ret);
             notify_app_tcp_event_accept(tctx, tcp_accept_msg_in->opaque_connection, tcp_accept_msg_in->fd, tcp_accept_msg_in->newfd, -1, 0, 0, 0, 0, 0, 0, 0);
+        }
         break;
     case APPOUT_TCP_CLOSE:
         tcp_close_msg_in = (struct appout_tcp_close_t *)msg_in->data;
-        if (tcp_close(tctx, tcp_close_msg_in))
+        if ((ret = tcp_close(tctx, tcp_close_msg_in))) {
+            fprintf(stderr, "tcp_close() failed, ret: %x\n", ret);
             notify_app_tcp_status_close(tctx, tcp_close_msg_in->opaque_connection, tcp_close_msg_in->fd, -1);
+        }
         break;
     }
 }
