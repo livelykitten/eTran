@@ -61,6 +61,7 @@ struct connection {
     }
 };
 
+std::mutex conn_fds_mtx;
 std::list<int> conn_fds;
 
 static inline int listen_socket(int fd, int epfd, uint32_t events)
@@ -74,7 +75,9 @@ static inline int listen_socket(int fd, int epfd, uint32_t events)
     if (events & EPOLLIN) {
         int newfd = accept(fd, NULL, NULL);
         if (newfd > 0) {
+            conn_fds_mtx.lock();
             conn_fds.push_back(newfd);
+            conn_fds_mtx.unlock();
             // set this socket to NOBLOCK
             if (fcntl(newfd, F_SETFL, fcntl(newfd, F_GETFL, 0) | O_NONBLOCK)) {
                 fprintf(stderr, "Failed to set non-blocking\n");
@@ -98,7 +101,8 @@ static inline int connection_send(unsigned int tid, struct connection *c)
     ssize_t ret;
     uint32_t target_bytes;
     while (c->pending_bytes) {
-        target_bytes = std::min(c->pending_bytes, (unsigned int)DATA_BLOCK_SIZE);
+        target_bytes = std::min(c->pending_bytes, c->response_bytes - c->buf_offset);
+        target_bytes = std::min(target_bytes, (unsigned int)DATA_BLOCK_SIZE);
         ret = write(c->fd, c->buf + c->buf_offset, target_bytes);
         if (ret > 0) {
             c->pending_bytes -= ret;
@@ -211,7 +215,9 @@ void thread_func(unsigned int tid)
             }
 
             if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
+                conn_fds_mtx.lock();
                 conn_fds.remove(c->fd);
+                conn_fds_mtx.unlock();
                 // remove from epoll
                 if (epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL) < 0) {
                     fprintf(stderr, "Failed to remove erronous fd from epoll\n");
@@ -225,6 +231,22 @@ void thread_func(unsigned int tid)
             }
 
             int ret = connection_events(tid, c, events[i].events);
+
+            if (ret < 0) {
+                conn_fds_mtx.lock();
+                conn_fds.remove(c->fd);
+                conn_fds_mtx.unlock();
+                // remove from epoll
+                if (epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL) < 0) {
+                    fprintf(stderr, "Failed to remove erronous fd from epoll\n");
+                    close(c->fd);
+                    close(epfd);
+                    return;
+                }
+                close(c->fd);
+                delete c;
+                continue;
+            }
 
             if (ret == 1 && !c->has_epoll_out) {
                 ev.events = EPOLLIN | EPOLLOUT;
@@ -246,19 +268,6 @@ void thread_func(unsigned int tid)
                     return;
                 }
                 c->has_epoll_out = false;
-            } else {
-                conn_fds.remove(c->fd);
-                // remove from epoll
-                if (epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL) < 0) {
-                    fprintf(stderr, "Failed to remove erronous fd from epoll\n");
-                    close(c->fd);
-                    close(epfd);
-                    return;
-                }
-                epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL);
-                close(c->fd);
-                delete c;
-                continue;
             }
         }
 
@@ -323,6 +332,16 @@ int main(int argc, char *argv[])
         std::cout << "Failed to parse arguments." << std::endl;
         exit(EXIT_FAILURE);
     }
+
+    if (message_bytes > max_buf_size) {
+        fprintf(stderr, "message_bytes larger than max_buf_size");
+        return -1;
+    }
+
+    if (nr_threads == 0 || nr_threads > MAX_THREADS) {
+        fprintf(stderr, "nr_threads must be between 1 and %d\n", MAX_THREADS);
+        return -1;
+    }
     
     for (unsigned int i = 0; i < nr_threads; i++) {
         threads.push_back(std::thread(thread_func, i));
@@ -344,9 +363,15 @@ int main(int argc, char *argv[])
             total_in += _in;
             total_out += _out;
 
+            size_t nr_conn_fds;
+            {
+                std::lock_guard<std::mutex> lock(conn_fds_mtx);
+                nr_conn_fds = conn_fds.size();
+            }
+
             printf("Throughput In/Out(%.2f/%.2f Gbps)(%.2f Kops) conn#(%lu), avg_nr_events(%u), total_recv(%luB), total_resp(%luB)\n", 
                 _in * 8.0 / 1e9, _out * 8.0 / 1e9, _in / message_bytes / 1e3,
-                conn_fds.size(), avg_nr_events.load(), total_in, total_out);
+                nr_conn_fds, avg_nr_events.load(), total_in, total_out);
         }
     }).detach();
 

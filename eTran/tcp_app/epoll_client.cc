@@ -96,7 +96,8 @@ static inline void connection_recv(unsigned int tid, struct connection *c)
     // Receive messages as much as possible through this connection if there are outstanding messages
     while (wait_response) {
         uint32_t target_bytes = short_response ? SHORT_RESPONSE_SIZE : message_bytes;
-        ret = read(c->fd, c->buf + c->recv_len, std::min(target_bytes, (unsigned int)DATA_BLOCK_SIZE));
+        uint32_t remaining_bytes = target_bytes - c->recv_len;
+        ret = read(c->fd, c->buf + c->recv_len, std::min(remaining_bytes, (unsigned int)DATA_BLOCK_SIZE));
         if (ret > 0) {
             c->recv_len += ret;
             total_resp_bytes[tid].fetch_add(ret);
@@ -216,7 +217,9 @@ void thread_func(unsigned int tid)
             
             if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
                 fprintf(stderr, "EPOLLERR\n");
+                conn_fds_mtx.lock();
                 conn_fds.remove(c->fd);
+                conn_fds_mtx.unlock();
                 // remove from epoll
                 epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL);
                 close(c->fd);
@@ -319,6 +322,17 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    if (message_bytes > max_buf_size) {
+        fprintf(stderr, "message_bytes larger than max_buf_size");
+        return -1;
+    }
+
+    if (nr_threads == 0 || nr_threads > MAX_THREADS) {
+        fprintf(stderr, "nr_threads must be between 1 and %d\n", MAX_THREADS);
+        return -1;
+    }
+
+
     for (unsigned int i = 0; i < nr_threads; i++) {
         threads.push_back(std::thread(thread_func, i));
     }
@@ -338,9 +352,15 @@ int main(int argc, char *argv[])
             total_out += _out;
             total_in += _in;
 
+            size_t nr_conn_fds;
+            {
+                std::lock_guard<std::mutex> lock(conn_fds_mtx);
+                nr_conn_fds = conn_fds.size();
+            }
+
             printf("Throughput In/Out(%.2f/%.2f Gbps)(%.2f Kops) conn#(%lu), avg_nr_events(%u), total_out(%luB), total_in(%luB)\n", 
                 _out * 8.0 / 1e9, _in * 8.0 / 1e9, _out / message_bytes / 1e3,
-                conn_fds.size(), avg_nr_events.load(), total_out, total_in);
+                nr_conn_fds, avg_nr_events.load(), total_out, total_in);
         }
     }).detach();
 
