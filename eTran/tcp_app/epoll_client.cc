@@ -24,7 +24,7 @@ unsigned int max_buf_size = 4096;
 int wait_seconds = 0;
 bool multiport = false;
 bool dump_io_stats = false;
-bool short_response = false;
+bool short_response = true;
 unsigned int max_outstanding = 1;
 unsigned int nr_flows = 1;
 unsigned int nr_threads = 1;
@@ -306,7 +306,7 @@ int parse_args(int argc, char *argv[])
                     " [-f nr_flows, default:1]"
                     " [-p server_port, default:50000]" << 
                     " [-w wait_seconds, default:0]" <<
-                    " [-s enable short_response, default:true]" << 
+                    " [-s disable short_response, default:true]" << 
                     " [-o max_outstanding, default:1]" <<
                     " [-m multiport, default:false]" << 
                     " [-d dump_io_stats]" << std::endl;

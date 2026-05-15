@@ -317,7 +317,7 @@ int parse_args(int argc, char *argv[])
                     " [-b bytes, default:100]" << 
                     " [-i server_ip, default:192.168.6.2]" <<
                     " [-p server_port, default:50000]" << 
-                    " [-s enable short_response, default:true]" << 
+                    " [-s disable short_response, default:true]" << 
                     " [-d dump_io_stats]" << std::endl;
                 return -1;
         }
