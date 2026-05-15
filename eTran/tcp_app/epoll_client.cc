@@ -24,7 +24,7 @@ unsigned int max_buf_size = 4096;
 int wait_seconds = 0;
 bool multiport = false;
 bool dump_io_stats = false;
-bool short_response = true;
+bool short_response = false;
 unsigned int max_outstanding = 1;
 unsigned int nr_flows = 1;
 unsigned int nr_threads = 1;
@@ -58,11 +58,13 @@ struct connection {
     char *buf;
     bool no_epoll_out;
     
-    connection(int fd, unsigned int message_bytes, unsigned int max_outstanding) : fd(fd), message_bytes(message_bytes), max_outstanding(max_outstanding) {
+    connection(int fd, unsigned int message_bytes, unsigned int max_outstanding, bool short_response) : fd(fd), message_bytes(message_bytes), max_outstanding(max_outstanding) {
         no_epoll_out = false;
         recv_len = 0;
-        total_bytes = message_bytes * max_outstanding;
-        pending_bytes = total_bytes;
+        unsigned int send_window_bytes = message_bytes * max_outstanding;
+        unsigned int response_bytes = short_response ? SHORT_RESPONSE_SIZE : message_bytes;
+        total_bytes = std::max(send_window_bytes, response_bytes);
+        pending_bytes = send_window_bytes;
         buf = (char *)calloc(1, total_bytes);
     }
 };
@@ -183,7 +185,7 @@ void thread_func(unsigned int tid)
         }
 
         ev.events = EPOLLIN | EPOLLOUT | EPOLLERR;
-        ev.data.ptr = new connection(fd, message_bytes, max_outstanding);
+        ev.data.ptr = new connection(fd, message_bytes, max_outstanding, short_response);
 
         if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev) < 0) {
             fprintf(stderr, "Failed to add fd to epoll\n");
