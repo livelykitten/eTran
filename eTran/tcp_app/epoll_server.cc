@@ -92,6 +92,7 @@ static inline int listen_socket(int fd, int epfd, uint32_t events)
         close(fd);
         return -1;
     }
+    printf("beginning to listen\n");
     while (events & EPOLLIN) {
         int newfd = accept(fd, NULL, NULL);
         if (newfd < 0) {

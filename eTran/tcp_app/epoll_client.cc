@@ -241,6 +241,31 @@ static inline int connection_recv(unsigned int tid, struct connection *c)
             if (ret > 0) {
                 // check
                 if (memcmp(c->send_buf_check_pos, c->recv_buf_pos, ret) != 0) {
+                    ssize_t mismatch = 0;
+                    int expected_msg = (c->send_buf_check_pos - c->send_buf) / c->SEND_MSG_SIZE;
+                    int matched_msg = -1;
+                    while (mismatch < ret &&
+                           c->send_buf_check_pos[mismatch] == c->recv_buf_pos[mismatch]) {
+                        mismatch++;
+                    }
+                    for (unsigned int msg = 0; msg < c->MAX_OUTSTANDING; msg++) {
+                        ssize_t cmp_len = std::min((ssize_t)c->SEND_MSG_SIZE, ret);
+                        if (memcmp(c->send_buf + msg * c->SEND_MSG_SIZE,
+                                   c->recv_buf_pos, cmp_len) == 0) {
+                            matched_msg = msg;
+                            break;
+                        }
+                    }
+                    fprintf(stderr,
+                            "full response mismatch: mismatch=%zd/%zd, expected=%02x, actual=%02x, "
+                            "expected_msg=%d, matched_msg=%d, outstanding_bytes=%zd, "
+                            "recv_buf_offset=%zd, send_check_offset=%zd\n",
+                            mismatch, ret,
+                            mismatch < ret ? (unsigned char)c->send_buf_check_pos[mismatch] : 0,
+                            mismatch < ret ? (unsigned char)c->recv_buf_pos[mismatch] : 0,
+                            expected_msg, matched_msg, c->outstanding_bytes,
+                            c->recv_buf_pos - c->recv_buf,
+                            c->send_buf_check_pos - c->send_buf);
                     assert(false);
                 }
                 // update positions
