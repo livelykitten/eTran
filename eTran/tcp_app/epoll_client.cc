@@ -159,11 +159,22 @@ static inline int connection_recv(unsigned int tid, struct connection *c)
         while (c->outstanding_bytes > 0) {
             // ssize_t complete_outstanding_msgs = c->outstanding_bytes / c->SEND_MSG_SIZE;
             ssize_t partial_recv_bytes = c->recv_buf_pos - c->recv_check_pos;
+            if (partial_recv_bytes > 0 && c->recv_check_pos != c->recv_buf) {
+                memmove(c->recv_buf, c->recv_check_pos, partial_recv_bytes);
+                c->recv_check_pos = c->recv_buf;
+                c->recv_buf_pos = c->recv_buf + partial_recv_bytes;
+            } else if (partial_recv_bytes == 0) {
+                c->recv_check_pos = c->recv_buf;
+                c->recv_buf_pos = c->recv_buf;
+            }
+
             ssize_t outstanding_resp_bytes = c->num_outstanding_msg * SHORT_RESPONSE_SIZE - partial_recv_bytes;
             if (outstanding_resp_bytes <= 0)
                 break;
 
-            ret = read(c->fd, c->recv_buf_pos, std::min(outstanding_resp_bytes, (ssize_t)DATA_BLOCK_SIZE));
+            ssize_t recv_buf_avail = c->recv_buf + c->recv_buf_len - c->recv_buf_pos;
+            ret = read(c->fd, c->recv_buf_pos,
+                       std::min(std::min(outstanding_resp_bytes, recv_buf_avail), (ssize_t)DATA_BLOCK_SIZE));
 
             if (ret > 0) {
                 c->recv_buf_pos += ret;
@@ -180,12 +191,6 @@ static inline int connection_recv(unsigned int tid, struct connection *c)
 
                 if (c->send_buf_check_pos >= c->send_buf + c->total_msg_size) {
                     c->send_buf_check_pos -= c->total_msg_size;
-                }
-                if (c->recv_check_pos >= c->recv_buf + c->recv_buf_len / 2) {
-                    c->recv_check_pos -= c->recv_buf_len / 2;
-                }
-                if (c->recv_buf_pos >= c->recv_buf + c->recv_buf_len / 2) {
-                    c->recv_buf_pos -= c->recv_buf_len / 2;
                 }
 
                 c->num_outstanding_msg -= num_responses;
