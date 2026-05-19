@@ -75,8 +75,22 @@ static inline void lazy_update_prev_conn_rxev(struct eTrantcp_connection *cached
         return;
 
     size_t contiguous = eTran_tcp_rx_contiguous_count(cached_conn);
-    if (contiguous <= cached_conn->rxb_used)
+    if (contiguous <= cached_conn->rxb_used) {
+        uint32_t first_pos = POISON_32;
+        uint16_t first_len = POISON_16;
+        if (!cached_conn->rx_addrs.empty()) {
+            auto [first_addr, first_pkt] = cached_conn->rx_addrs.front();
+            (void)first_addr;
+            first_pos = rxmeta_pos(first_pkt);
+            first_len = rxmeta_plen(first_pkt);
+        }
+        fprintf(stderr,
+                "rx credit deferred: bump=%zu contiguous=%zu rxb_used=%u rxb_head=%u "
+                "rx_addrs=%zu first_pos=%u first_len=%u\n",
+                cached_rx_bump, contiguous, cached_conn->rxb_used, cached_conn->rxb_head,
+                cached_conn->rx_addrs.size(), first_pos, first_len);
         return;
+    }
 
     cached_rx_bump = contiguous - cached_conn->rxb_used;
     ret_events[*nr_event].type = ETRANTCP_EV_CONN_RECVED;
