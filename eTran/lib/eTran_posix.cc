@@ -106,6 +106,22 @@ static inline void in_order_receive(struct eTrantcp_connection *conn, uint64_t a
     conn->rx_addrs.push_back({addr, pkt});
 }
 
+static inline void insert_receive_ordered(std::list<std::pair<uint64_t, char *> > *rx_addrs, uint64_t addr, char *pkt)
+{
+    uint32_t pos = rxmeta_pos(pkt);
+
+    for (auto it = rx_addrs->begin(); it != rx_addrs->end(); it++) {
+        auto [cur_addr, cur_pkt] = *it;
+        (void)cur_addr;
+        if (rxmeta_pos(cur_pkt) > pos) {
+            rx_addrs->insert(it, {addr, pkt});
+            return;
+        }
+    }
+
+    rx_addrs->push_back({addr, pkt});
+}
+
 static inline void out_of_order_receive(struct eTrantcp_connection *conn, uint64_t addr, char *pkt)
 {
     conn->ooo_rx_addrs.push_back({addr, pkt});
@@ -295,10 +311,12 @@ static inline void handle_rx(struct app_ctx_per_thread *tctx, struct eTrantcp_co
         {
             ooo_bump &= ~OOO_FIN_MASK;
             *cached_rx_bump += ooo_bump; // ooo_bump has already included py_len
-            /* append ooo_rx_addrs to the tail of rx_addrs */
-            conn->rx_addrs.insert(conn->rx_addrs.end(), conn->ooo_rx_addrs.begin(), conn->ooo_rx_addrs.end());
+            for (auto it = conn->ooo_rx_addrs.begin(); it != conn->ooo_rx_addrs.end(); it++) {
+                auto [ooo_addr, ooo_pkt] = *it;
+                insert_receive_ordered(&conn->rx_addrs, ooo_addr, ooo_pkt);
+            }
             conn->ooo_rx_addrs.clear();
-            in_order_receive(conn, addr, pkt);
+            insert_receive_ordered(&conn->rx_addrs, addr, pkt);
             // printf("out_of_order_receive fin: rx_bump = %ld\n", *cached_rx_bump);
         }
         else if (ooo_bump & OOO_SEGMENT_MASK)
