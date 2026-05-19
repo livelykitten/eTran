@@ -186,6 +186,7 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
         }
 
         if (it == conn->rx_addrs.end()) {
+#ifdef ETRAN_RX_DEBUG
             if (copy_offset == 0) {
                 uint32_t first_pos = POISON_32;
                 uint16_t first_len = POISON_16;
@@ -203,6 +204,7 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
                         expected_pos, conn->rxb_head, conn->rxb_used, count,
                         conn->rx_addrs.size(), first_pos, first_len, first_off);
             }
+#endif
             break;
         }
 
