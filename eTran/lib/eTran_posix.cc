@@ -73,6 +73,12 @@ static inline void lazy_update_prev_conn_rxev(struct eTrantcp_connection *cached
 {
     if (!cached_rx_bump)
         return;
+
+    size_t contiguous = eTran_tcp_rx_contiguous_count(cached_conn);
+    if (contiguous <= cached_conn->rxb_used)
+        return;
+
+    cached_rx_bump = contiguous - cached_conn->rxb_used;
     ret_events[*nr_event].type = ETRANTCP_EV_CONN_RECVED;
     ret_events[*nr_event].ev.recv.conn = cached_conn;
     (*nr_event)++;

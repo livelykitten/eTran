@@ -55,6 +55,42 @@ static inline void dma(void *dst, void *src, size_t len)
     memcpy(dst, src, len);
 }
 
+static inline size_t eTran_tcp_rx_contiguous_count(struct eTrantcp_connection *conn)
+{
+    size_t contiguous = 0;
+
+    while (contiguous < conn->rx_buf_size) {
+        uint32_t expected_pos = conn->rxb_head + contiguous;
+        if (expected_pos >= conn->rx_buf_size) {
+            expected_pos -= conn->rx_buf_size;
+        }
+
+        size_t best_len = 0;
+        for (auto it = conn->rx_addrs.begin(); it != conn->rx_addrs.end(); it++) {
+            auto [addr, pkt] = *it;
+            (void)addr;
+            uint16_t py_len = rxmeta_plen(pkt);
+            uint32_t rx_pos = rxmeta_pos(pkt);
+            uint32_t delta = expected_pos >= rx_pos ?
+                             expected_pos - rx_pos :
+                             conn->rx_buf_size - rx_pos + expected_pos;
+
+            if (delta < py_len) {
+                best_len = py_len - delta;
+                break;
+            }
+        }
+
+        if (!best_len) {
+            break;
+        }
+
+        contiguous += best_len;
+    }
+
+    return contiguous;
+}
+
 /**
  * @brief return how many bytes can be submitted to AF_XDP
  */
