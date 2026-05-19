@@ -135,9 +135,16 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
         }
 
         auto it = conn->rx_addrs.begin();
+        uint32_t pkt_delta = 0;
         for (; it != conn->rx_addrs.end(); it++) {
             auto [addr, pkt] = *it;
-            if (rxmeta_pos(pkt) == expected_pos) {
+            uint16_t py_len = rxmeta_plen(pkt);
+            uint32_t rx_pos = rxmeta_pos(pkt);
+            uint32_t delta = expected_pos >= rx_pos ?
+                             expected_pos - rx_pos :
+                             conn->rx_buf_size - rx_pos + expected_pos;
+            if (delta < py_len) {
+                pkt_delta = delta;
                 break;
             }
         }
@@ -166,12 +173,12 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
         auto [addr, pkt] = *it;
         uint16_t py_len = rxmeta_plen(pkt);
         uint16_t py_off = rxmeta_poff(pkt);
-        auto append_len = std::min((size_t)py_len, count - copy_offset);
+        auto append_len = std::min((size_t)py_len - pkt_delta, count - copy_offset);
 
-        dma((uint8_t *)buf + copy_offset, pkt + py_off, append_len);
+        dma((uint8_t *)buf + copy_offset, pkt + py_off + pkt_delta, append_len);
         copy_offset += append_len;
 
-        if (likely(append_len == py_len)) {
+        if (likely(pkt_delta + append_len == py_len)) {
             thread_bcache_prod(&tctx->iobuffer, addr);
             conn->rx_addrs.erase(it);
         } else {
@@ -179,8 +186,8 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
             if (rx_pos >= conn->rx_buf_size) {
                 rx_pos -= conn->rx_buf_size;
             }
-            rxmeta_set_poff(pkt, py_off + append_len);
-            rxmeta_set_plen(pkt, py_len - append_len);
+            rxmeta_set_poff(pkt, py_off + pkt_delta + append_len);
+            rxmeta_set_plen(pkt, py_len - pkt_delta - append_len);
             rxmeta_set_pos(pkt, rx_pos);
             break;
         }
