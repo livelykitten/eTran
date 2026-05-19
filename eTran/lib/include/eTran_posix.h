@@ -143,6 +143,23 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
         }
 
         if (it == conn->rx_addrs.end()) {
+            if (copy_offset == 0) {
+                uint32_t first_pos = POISON_32;
+                uint16_t first_len = POISON_16;
+                uint16_t first_off = POISON_16;
+                if (!conn->rx_addrs.empty()) {
+                    auto [first_addr, first_pkt] = conn->rx_addrs.front();
+                    (void)first_addr;
+                    first_pos = rxmeta_pos(first_pkt);
+                    first_len = rxmeta_plen(first_pkt);
+                    first_off = rxmeta_poff(first_pkt);
+                }
+                fprintf(stderr,
+                        "rx ordered peek stalled: expected_pos=%u rxb_head=%u rxb_used=%u "
+                        "count=%zu rx_addrs=%zu first_pos=%u first_len=%u first_off=%u\n",
+                        expected_pos, conn->rxb_head, conn->rxb_used, count,
+                        conn->rx_addrs.size(), first_pos, first_len, first_off);
+            }
             break;
         }
 
