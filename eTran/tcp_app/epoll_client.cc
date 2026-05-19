@@ -183,18 +183,29 @@ static inline int connection_recv(unsigned int tid, struct connection *c)
                 for (unsigned int i = 0; i < num_responses; i++) {
                     if (memcmp(c->send_buf_check_pos, c->recv_check_pos, SHORT_RESPONSE_SIZE) != 0) {
                         unsigned int mismatch = 0;
+                        int matched_msg = -1;
+                        int expected_msg = (c->send_buf_check_pos - c->send_buf) / c->SEND_MSG_SIZE;
                         while (mismatch < SHORT_RESPONSE_SIZE &&
                                c->send_buf_check_pos[mismatch] == c->recv_check_pos[mismatch]) {
                             mismatch++;
                         }
+                        for (unsigned int msg = 0; msg < c->MAX_OUTSTANDING; msg++) {
+                            if (memcmp(c->send_buf + msg * c->SEND_MSG_SIZE,
+                                       c->recv_check_pos, SHORT_RESPONSE_SIZE) == 0) {
+                                matched_msg = msg;
+                                break;
+                            }
+                        }
                         fprintf(stderr,
                                 "short response mismatch: mismatch=%u, expected=%02x, actual=%02x, "
-                                "num_responses=%u/%u, outstanding_bytes=%zd, num_outstanding_msg=%zd, "
+                                "expected_msg=%d, matched_msg=%d, num_responses=%u/%u, "
+                                "outstanding_bytes=%zd, num_outstanding_msg=%zd, "
                                 "recv_pending=%zd\n",
                                 mismatch,
                                 mismatch < SHORT_RESPONSE_SIZE ? (unsigned char)c->send_buf_check_pos[mismatch] : 0,
                                 mismatch < SHORT_RESPONSE_SIZE ? (unsigned char)c->recv_check_pos[mismatch] : 0,
-                                i, num_responses, c->outstanding_bytes, c->num_outstanding_msg,
+                                expected_msg, matched_msg, i, num_responses,
+                                c->outstanding_bytes, c->num_outstanding_msg,
                                 c->recv_buf_pos - c->recv_check_pos);
                         assert(false);
                     }
