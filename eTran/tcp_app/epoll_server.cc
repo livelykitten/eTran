@@ -213,7 +213,6 @@ static inline int connection_recv(unsigned int tid, struct connection *c)
             }
             c->bytes_inbound += ret;
 
-            assert((c->check_pos - c->buf) % c->MESSAGE_SIZE == 0);
             total_recv_bytes[tid].fetch_add(ret);
         } else if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             break;

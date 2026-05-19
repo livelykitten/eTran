@@ -235,7 +235,9 @@ static inline int connection_recv(unsigned int tid, struct connection *c)
 
     } else {
         while (c->outstanding_bytes > 0) {
-            ret = read(c->fd, c->recv_buf_pos, std::min(c->outstanding_bytes, (long)DATA_BLOCK_SIZE));
+            ssize_t recv_buf_avail = c->recv_buf + c->total_msg_size - c->recv_buf_pos;
+            ret = read(c->fd, c->recv_buf_pos,
+                       std::min(std::min(c->outstanding_bytes, recv_buf_avail), (ssize_t)DATA_BLOCK_SIZE));
             if (ret > 0) {
                 // check
                 if (memcmp(c->send_buf_check_pos, c->recv_buf_pos, ret) != 0) {
