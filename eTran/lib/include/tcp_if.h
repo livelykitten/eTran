@@ -52,6 +52,7 @@ struct eTrantcp_listener {
     std::list<struct tcp_connection *> conns;
 
     uint16_t local_port;
+    uint32_t pending_newconn;
 
     struct eTran_socket_t *s;
 };

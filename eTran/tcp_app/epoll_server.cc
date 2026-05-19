@@ -95,6 +95,7 @@ static inline int listen_socket(int fd, int epfd, uint32_t events)
     while (events & EPOLLIN) {
         int newfd = accept(fd, NULL, NULL);
         if (newfd < 0) {
+            fprintf(stdout, "accept() returned %d errno=%d\n", newfd, errno);
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
             }
@@ -104,6 +105,7 @@ static inline int listen_socket(int fd, int epfd, uint32_t events)
             fprintf(stderr, "Failed to accept new connection\n");
             return -1;
         }
+        printf("Connection accpeted: %d\n", newfd);
 
         int flags = fcntl(newfd, F_GETFL, 0);
         if (flags < 0 || fcntl(newfd, F_SETFL, flags | O_NONBLOCK)) {

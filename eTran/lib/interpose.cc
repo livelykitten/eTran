@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -131,7 +132,7 @@ int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     if (unlikely(sockfd < 0))
         return -EINVAL;
     newfd = eTran_accept(sockfd, addr, addrlen);
-    if (newfd < 0)
+    if (newfd < 0 && (newfd != -EAGAIN && newfd != -EWOULDBLOCK))
         return libc_accept(sockfd, addr, addrlen);
     return newfd;
 }
@@ -153,7 +154,7 @@ ssize_t read(int fd, void *buf, size_t count)
     if (unlikely(fd < 0))
         return -EINVAL;
     ret = eTran_read(fd, buf, count);
-    if (ret < 0) {
+    if (ret < 0 && ret != -EAGAIN && ret != -EWOULDBLOCK) {
         return libc_read(fd, buf, count);
     }
     return ret;
@@ -166,7 +167,7 @@ ssize_t write(int fd, const void *buf, size_t count)
     if (unlikely(fd < 0))
         return -EINVAL;
     ret = eTran_write(fd, buf, count);
-    if (ret < 0) {
+    if (ret < 0 && ret != -EAGAIN && ret != -EWOULDBLOCK) {
         return libc_write(fd, buf, count);
     }
     return ret;
