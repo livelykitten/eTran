@@ -91,6 +91,32 @@ static inline size_t eTran_tcp_rx_contiguous_count(struct eTrantcp_connection *c
     return contiguous;
 }
 
+#ifdef ETRAN_RX_DEBUG
+static inline void eTran_tcp_rx_dump_state(const char *tag, struct eTrantcp_connection *conn)
+{
+    fprintf(stderr,
+            "%s: conn=%p rxb_head=%u rxb_used=%u rx_buf_size=%u rx_addrs=%zu ooo_rx_addrs=%zu",
+            tag, conn, conn->rxb_head, conn->rxb_used, conn->rx_buf_size,
+            conn->rx_addrs.size(), conn->ooo_rx_addrs.size());
+
+    unsigned int shown = 0;
+    for (auto it = conn->rx_addrs.begin(); it != conn->rx_addrs.end() && shown < 8; it++, shown++) {
+        auto [addr, pkt] = *it;
+        fprintf(stderr, " rx[%u]={addr=%lu,pos=%u,plen=%u,poff=%u}",
+                shown, addr, rxmeta_pos(pkt), rxmeta_plen(pkt), rxmeta_poff(pkt));
+    }
+
+    shown = 0;
+    for (auto it = conn->ooo_rx_addrs.begin(); it != conn->ooo_rx_addrs.end() && shown < 8; it++, shown++) {
+        auto [addr, pkt] = *it;
+        fprintf(stderr, " ooo[%u]={addr=%lu,pos=%u,plen=%u,poff=%u}",
+                shown, addr, rxmeta_pos(pkt), rxmeta_plen(pkt), rxmeta_poff(pkt));
+    }
+
+    fprintf(stderr, "\n");
+}
+#endif
+
 /**
  * @brief return how many bytes can be submitted to AF_XDP
  */
@@ -203,6 +229,7 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
                         "count=%zu rx_addrs=%zu first_pos=%u first_len=%u first_off=%u\n",
                         expected_pos, conn->rxb_head, conn->rxb_used, count,
                         conn->rx_addrs.size(), first_pos, first_len, first_off);
+                eTran_tcp_rx_dump_state("rx ordered peek stalled state", conn);
             }
 #endif
             break;

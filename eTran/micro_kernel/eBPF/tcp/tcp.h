@@ -905,6 +905,12 @@ unlock:
         }
 
         if (unlikely(data_meta->rx.ooo_bump & OOO_FIN_MASK)) {
+            if (unlikely(rx_bump & OOO_MASK)) {
+                xdp_log_panic("rx_bump overlaps OOO flags: rx_bump=%u", rx_bump);
+                drop = true;
+                goto out;
+            }
+
             /* piggyback rx_bump */
             data_meta->rx.ooo_bump |= rx_bump;
         }

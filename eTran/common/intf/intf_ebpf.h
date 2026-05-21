@@ -80,6 +80,7 @@ typedef struct __attribute__((packed)) {
     #define OOO_SEGMENT_MASK    0x80000000
     #define OOO_FIN_MASK        0x40000000
     #define OOO_CLEAR_MASK      0x20000000
+    #define OOO_MASK            (OOO_SEGMENT_MASK | OOO_FIN_MASK | OOO_CLEAR_MASK)
 } rx_t;
 
 struct meta_info {
