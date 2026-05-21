@@ -95,13 +95,6 @@ static inline void lazy_update_prev_conn_rxev(struct eTrantcp_connection *cached
         return;
     }
 
-#ifdef ETRAN_RX_DEBUG
-    fprintf(stderr,
-            "rx credit grant: bump=%zu contiguous=%zu old_rxb_used=%u new_rxb_used=%zu rxb_head=%u\n",
-            cached_rx_bump, contiguous, cached_conn->rxb_used, contiguous, cached_conn->rxb_head);
-    eTran_tcp_rx_dump_state("rx credit grant state", cached_conn);
-#endif
-
     cached_rx_bump = contiguous - cached_conn->rxb_used;
     ret_events[*nr_event].type = ETRANTCP_EV_CONN_RECVED;
     ret_events[*nr_event].ev.recv.conn = cached_conn;
