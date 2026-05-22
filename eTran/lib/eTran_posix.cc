@@ -75,6 +75,12 @@ static inline void lazy_update_prev_conn_rxev(struct eTrantcp_connection *cached
         return;
 
     size_t contiguous = eTran_tcp_rx_contiguous_count(cached_conn);
+    if (contiguous > 0 && !cached_conn->rx_addrs.empty()) {
+        auto [a, p] = cached_conn->rx_addrs.front();
+        if (rxmeta_plen(p) == 0) {
+            fprintf(stderr, "BUG: contiguous=%zu but front plen=0\n", contiguous);
+        }
+    }
     if (contiguous <= cached_conn->rxb_used) {
 #ifdef ETRAN_RX_DEBUG
         uint32_t first_pos = POISON_32;
@@ -106,6 +112,10 @@ static inline void lazy_update_prev_conn_rxev(struct eTrantcp_connection *cached
 
 static inline void in_order_receive(struct eTrantcp_connection *conn, uint64_t addr, char *pkt)
 {
+    if (rxmeta_plen(pkt) == 0) {
+        fprintf(stderr, "ZERO PLEN before push: addr=%lu pkt=%p pos=%u poff=%u\n",
+                addr, pkt, rxmeta_pos(pkt), rxmeta_poff(pkt));
+    }
     conn->rx_addrs.push_back({addr, pkt});
 }
 
@@ -127,6 +137,10 @@ static inline void insert_receive_ordered(std::list<std::pair<uint64_t, char *> 
 
 static inline void out_of_order_receive(struct eTrantcp_connection *conn, uint64_t addr, char *pkt)
 {
+    if (rxmeta_plen(pkt) == 0) {
+        fprintf(stderr, "ZERO PLEN before push: addr=%lu pkt=%p pos=%u poff=%u\n",
+                addr, pkt, rxmeta_pos(pkt), rxmeta_poff(pkt));
+    }
     conn->ooo_rx_addrs.push_back({addr, pkt});
 }
 
