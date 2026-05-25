@@ -1004,7 +1004,9 @@ static void tcp_ebpf_sync(struct app_ctx_per_thread *tctx)
 
         if (xsk_ring_prod__reserve(tx, 1, &idx_tx) < 1)
         {
+#ifdef DEBUG
             fprintf(stdout, "#%u(idx:%u) Tx Ring is busy\n", conn->qid, qidx);
+#endif
             break;
         }
 

@@ -51,7 +51,7 @@
 #include "test_utils.h"
 #include "time_trace.h"
 
-#define IF_NAME "ens1f1np1"
+#define IF_NAME "ens6np0"
 static uint32_t local_ip;
 
 using std::string;
@@ -640,7 +640,7 @@ void homa_server::server(int thread_id, server_metrics *thread_metrics, uint32_t
         message_header *header;
 
         header = reinterpret_cast<message_header *>(req_handle->buffer._buf);
-        uint32_t resp_len = header->short_response ? 100 : header->length;
+        uint32_t resp_len = header->short_response ? 32 : header->length;
         header->freeze = 1;
 
         tt("Received Homa request, cid 0x%08x, id %u, length %d",
@@ -1206,7 +1206,7 @@ void homa_client::sender(uint32_t local_ip, uint16_t local_port)
             message_header *header;
 
             header = reinterpret_cast<message_header *>(req_handle->buffer._buf);
-            uint32_t resp_len = header->short_response ? 100 : header->length;
+            uint32_t resp_len = header->short_response ? 32 : header->length;
             header->freeze = 1;
 
             // allocate response buffer and submit response

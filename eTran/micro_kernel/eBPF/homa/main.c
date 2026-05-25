@@ -25,6 +25,11 @@ char LICENSE[] SEC("license") = "GPL";
 // #define HELP_PACER
 
 #define XDP_GEN_RETURN_DROP(last_grant) (last_grant ? XDP_ABORTED : XDP_DROP)
+#ifdef HOMA_RX_DEBUG
+#define HOMA_RX_PRINTK(fmt, ...) bpf_printk("HOMA_RX: " fmt, ##__VA_ARGS__)
+#else
+#define HOMA_RX_PRINTK(fmt, ...)
+#endif
 
 SEC("xdp_gen")
 int xdp_gen_prog(struct xdp_md *ctx)
@@ -293,7 +298,7 @@ SEC(".bss.lb_cnt") int lb_cnt = 0;
 SEC("xdp_sock")
 int xdp_sock_prog(struct xdp_md *ctx)
 {
-    unsigned int socket_id = 0;
+    int socket_id = 0;
     struct homa_meta_info *data_meta = NULL;
     void *data = NULL;
     void *data_end = NULL;
@@ -314,6 +319,7 @@ int xdp_sock_prog(struct xdp_md *ctx)
     __u32 remote_ip = 0;
     __u32 qid = ctx->rx_queue_index;
     __u16 local_port = 0;
+    __u64 rpcid = 0;
     struct target_xsk *target_xsk;
 
     #ifdef TEST_PACKET_LOST
@@ -336,6 +342,7 @@ int xdp_sock_prog(struct xdp_md *ctx)
     data_meta->rx.reap_client_buffer_addr = POISON_64;
     data_meta->rx.reap_server_buffer_addr = POISON_64;
     data_meta->rx.qid = ctx->rx_queue_index;
+    HOMA_RX_PRINTK("sock enter cpu=%u qid=%u\n", current_cpu, qid);
 
     /* Ethernet and IP header has already been parsed by the entrance program */
     nh.pos = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
@@ -346,12 +353,17 @@ int xdp_sock_prog(struct xdp_md *ctx)
     
     remote_ip = bpf_ntohl(iph->saddr);
     local_port = bpf_ntohs(homa_common_hdr->dport);
+    HOMA_RX_PRINTK("common type=%d sport=%u dport=%u\n", proto_type,
+                   bpf_ntohs(homa_common_hdr->sport), local_port);
 
     if (unlikely(proto_type != DATA))
         goto ctrl_pkt;
     
     single_packet = homa_parse_data_hdr(&nh, data_end, &homa_data_hdr);
     CHECK_AND_DROP_LOG(single_packet < 0, "homa_parse_data_hdr failed");
+    rpcid = local_id(bpf_be64_to_cpu(homa_data_hdr->common.sender_id));
+    HOMA_RX_PRINTK("data rpcid=%llu single=%d rem=%u\n", rpcid,
+                   single_packet, remote_ip);
 
 // load balancing
 #ifdef LB
@@ -397,26 +409,46 @@ bypass_lb:
 
     reclaim_rpc(homa_data_hdr, remote_ip, data_meta);
     
-    if (rpc_is_client(local_id(bpf_be64_to_cpu(homa_data_hdr->common.sender_id))))
+    if (rpc_is_client(rpcid)) {
+        HOMA_RX_PRINTK("client_response rpcid=%llu port=%u\n", rpcid,
+                       local_port);
         ret = client_response(homa_data_hdr, remote_ip, data_meta, single_packet);
-    else
+    } else {
+        HOMA_RX_PRINTK("server_request rpcid=%llu port=%u\n", rpcid,
+                       local_port);
         ret = server_request(homa_data_hdr, remote_ip, single_packet);
+    }
 
     CHECK_AND_DROP_LOG(ret == XDP_DROP, "XDP_DROP for error rpc state");
+    HOMA_RX_PRINTK("rpc state ok ret=%d port=%u\n", ret, local_port);
 
     target_xsk = bpf_map_lookup_elem(&port_tbl, &local_port);
-    CHECK_AND_DROP_LOG(!target_xsk, "Can't find corresponding XSK fd for this packet");
+    if (unlikely(!target_xsk)) {
+        HOMA_RX_PRINTK("port_tbl miss port=%u cpu=%u\n", local_port,
+                       current_cpu);
+        return XDP_DROP;
+    }
     
     socket_id = target_xsk->xsk_map_idx[current_cpu];
-    CHECK_AND_DROP_LOG(socket_id < 0, "socket_id < 0");
+    if (unlikely(socket_id < 0)) {
+        HOMA_RX_PRINTK("xsk miss port=%u cpu=%u xsk=%d\n", local_port,
+                       current_cpu, socket_id);
+        return XDP_DROP;
+    }
+    HOMA_RX_PRINTK("redirect port=%u cpu=%u xsk=%u\n", local_port,
+                   current_cpu, socket_id);
 
     return bpf_redirect_map(&xsks_map, socket_id, XDP_DROP);
 
 ctrl_pkt:
+    HOMA_RX_PRINTK("ctrl type=%d sport=%u dport=%u\n", proto_type,
+                   bpf_ntohs(homa_common_hdr->sport), local_port);
 
     switch (proto_type)
     {
         case RESEND:
+            HOMA_RX_PRINTK("ctrl RESEND port=%u rem=%u\n", local_port,
+                           remote_ip);
             CHECK_AND_DROP(homa_parse_resend_hdr(&nh, data_end, &homa_resend_hdr) != 0);
             ret = resend_pkt(homa_resend_hdr, data_meta, remote_ip);
             if (ret == UNKNOWN || ret == BUSY) {
@@ -424,18 +456,26 @@ ctrl_pkt:
             }
             goto drop;
         case UNKNOWN:
+            HOMA_RX_PRINTK("ctrl UNKNOWN port=%u rem=%u\n", local_port,
+                           remote_ip);
             CHECK_AND_DROP(homa_parse_unknown_hdr(&nh, data_end, &homa_unknown_hdr) != 0);
             ret = unknown_pkt(ctx, homa_unknown_hdr, data_meta, data_end, remote_ip);
             goto drop;
         case GRANT:
+            HOMA_RX_PRINTK("ctrl GRANT port=%u rem=%u\n", local_port,
+                           remote_ip);
             CHECK_AND_DROP(homa_parse_grant_hdr(&nh, data_end, &homa_grant_hdr) != 0);
             grant_pkt(homa_grant_hdr, remote_ip);
             goto drop;
         case BUSY:
+            HOMA_RX_PRINTK("ctrl BUSY port=%u rem=%u\n", local_port,
+                           remote_ip);
             CHECK_AND_DROP(homa_parse_busy_hdr(&nh, data_end, &homa_busy_hdr) != 0);
             busy_pkt(homa_busy_hdr, remote_ip);
             goto drop;
         default:
+            HOMA_RX_PRINTK("ctrl unknown type=%d port=%u\n", proto_type,
+                           local_port);
             return XDP_DROP;
     }
     
@@ -447,10 +487,20 @@ ctrl_pkt:
 
 drop:
     target_xsk = bpf_map_lookup_elem(&port_tbl, &local_port);
-    CHECK_AND_DROP_LOG(!target_xsk, "Can't find corresponding XSK fd for this packet");
+    if (unlikely(!target_xsk)) {
+        HOMA_RX_PRINTK("ctrl port_tbl miss port=%u cpu=%u\n", local_port,
+                       current_cpu);
+        return XDP_DROP;
+    }
     
     socket_id = target_xsk->xsk_map_idx[current_cpu];
-    CHECK_AND_DROP_LOG(socket_id < 0, "socket_id < 0");
+    if (unlikely(socket_id < 0)) {
+        HOMA_RX_PRINTK("ctrl xsk miss port=%u cpu=%u xsk=%d\n", local_port,
+                       current_cpu, socket_id);
+        return XDP_DROP;
+    }
+    HOMA_RX_PRINTK("ctrl redirect port=%u cpu=%u xsk=%u\n", local_port,
+                   current_cpu, socket_id);
     
     return bpf_redirect_map(&xsks_map, socket_id, XDP_DROP);
 }

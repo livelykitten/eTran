@@ -1428,8 +1428,8 @@ int tcp_packet(struct app_ctx *actx, struct pkt_tcp *p, uint32_t qid)
         {
 #ifdef DEBUG_TCP
             fprintf(stdout, "No connection and listener are found, send RST back\n");
-#endif
             fprintf(stdout, "No connection and listener are found, send RST back, %u, %d\n", htons(p->tcp.dest), (TCPH_FLAGS(&p->tcp)));
+#endif
             ret = -1;
             /* send reset if the packet received wasn't a reset */
             if (!(TCPH_FLAGS(&p->tcp) & TCP_RST))
