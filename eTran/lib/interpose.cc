@@ -131,8 +131,10 @@ int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     if (unlikely(sockfd < 0))
         return -EINVAL;
     newfd = eTran_accept(sockfd, addr, addrlen);
-    if (newfd < 0)
+    if (newfd < 0 && errno == EBADF)
         return libc_accept(sockfd, addr, addrlen);
+    if (newfd < 0)
+        return -1;
     return newfd;
 }
 
