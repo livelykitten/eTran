@@ -73,35 +73,6 @@ static inline void lazy_update_prev_conn_rxev(struct eTrantcp_connection *cached
 {
     if (!cached_rx_bump)
         return;
-
-    size_t contiguous = eTran_tcp_rx_contiguous_count(cached_conn);
-    if (contiguous > 0 && !cached_conn->rx_addrs.empty()) {
-        auto [a, p] = cached_conn->rx_addrs.front();
-        if (rxmeta_plen(p) == 0) {
-            fprintf(stderr, "BUG: contiguous=%zu but front plen=0\n", contiguous);
-        }
-    }
-    if (contiguous <= cached_conn->rxb_used) {
-#ifdef ETRAN_RX_DEBUG
-        uint32_t first_pos = POISON_32;
-        uint16_t first_len = POISON_16;
-        if (!cached_conn->rx_addrs.empty()) {
-            auto [first_addr, first_pkt] = cached_conn->rx_addrs.front();
-            (void)first_addr;
-            first_pos = rxmeta_pos(first_pkt);
-            first_len = rxmeta_plen(first_pkt);
-        }
-        fprintf(stderr,
-                "rx credit deferred: bump=%zu contiguous=%zu rxb_used=%u rxb_head=%u "
-                "rx_addrs=%zu first_pos=%u first_len=%u\n",
-                cached_rx_bump, contiguous, cached_conn->rxb_used, cached_conn->rxb_head,
-                cached_conn->rx_addrs.size(), first_pos, first_len);
-        eTran_tcp_rx_dump_state("rx credit deferred state", cached_conn);
-#endif
-        return;
-    }
-
-    cached_rx_bump = contiguous - cached_conn->rxb_used;
     ret_events[*nr_event].type = ETRANTCP_EV_CONN_RECVED;
     ret_events[*nr_event].ev.recv.conn = cached_conn;
     (*nr_event)++;
@@ -112,35 +83,11 @@ static inline void lazy_update_prev_conn_rxev(struct eTrantcp_connection *cached
 
 static inline void in_order_receive(struct eTrantcp_connection *conn, uint64_t addr, char *pkt)
 {
-    if (rxmeta_plen(pkt) == 0) {
-        fprintf(stderr, "ZERO PLEN before push: addr=%lu pkt=%p pos=%u poff=%u\n",
-                addr, pkt, rxmeta_pos(pkt), rxmeta_poff(pkt));
-    }
     conn->rx_addrs.push_back({addr, pkt});
-}
-
-static inline void insert_receive_ordered(std::list<std::pair<uint64_t, char *> > *rx_addrs, uint64_t addr, char *pkt)
-{
-    uint32_t pos = rxmeta_pos(pkt);
-
-    for (auto it = rx_addrs->begin(); it != rx_addrs->end(); it++) {
-        auto [cur_addr, cur_pkt] = *it;
-        (void)cur_addr;
-        if (rxmeta_pos(cur_pkt) > pos) {
-            rx_addrs->insert(it, {addr, pkt});
-            return;
-        }
-    }
-
-    rx_addrs->push_back({addr, pkt});
 }
 
 static inline void out_of_order_receive(struct eTrantcp_connection *conn, uint64_t addr, char *pkt)
 {
-    if (rxmeta_plen(pkt) == 0) {
-        fprintf(stderr, "ZERO PLEN before push: addr=%lu pkt=%p pos=%u poff=%u\n",
-                addr, pkt, rxmeta_pos(pkt), rxmeta_poff(pkt));
-    }
     conn->ooo_rx_addrs.push_back({addr, pkt});
 }
 
@@ -328,12 +275,10 @@ static inline void handle_rx(struct app_ctx_per_thread *tctx, struct eTrantcp_co
         {
             ooo_bump &= ~OOO_FIN_MASK;
             *cached_rx_bump += ooo_bump; // ooo_bump has already included py_len
-            for (auto it = conn->ooo_rx_addrs.begin(); it != conn->ooo_rx_addrs.end(); it++) {
-                auto [ooo_addr, ooo_pkt] = *it;
-                insert_receive_ordered(&conn->rx_addrs, ooo_addr, ooo_pkt);
-            }
+            /* append ooo_rx_addrs to the tail of rx_addrs */
+            conn->rx_addrs.insert(conn->rx_addrs.end(), conn->ooo_rx_addrs.begin(), conn->ooo_rx_addrs.end());
             conn->ooo_rx_addrs.clear();
-            insert_receive_ordered(&conn->rx_addrs, addr, pkt);
+            in_order_receive(conn, addr, pkt);
             // printf("out_of_order_receive fin: rx_bump = %ld\n", *cached_rx_bump);
         }
         else if (ooo_bump & OOO_SEGMENT_MASK)
@@ -1004,9 +949,7 @@ static void tcp_ebpf_sync(struct app_ctx_per_thread *tctx)
 
         if (xsk_ring_prod__reserve(tx, 1, &idx_tx) < 1)
         {
-#ifdef DEBUG
             fprintf(stdout, "#%u(idx:%u) Tx Ring is busy\n", conn->qid, qidx);
-#endif
             break;
         }
 
