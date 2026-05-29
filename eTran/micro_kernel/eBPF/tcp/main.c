@@ -332,6 +332,10 @@ int xdp_sock_prog(struct xdp_md *ctx)
 
     // filter out SYN, SYN-ACK, RST packets
     if (unlikely(is_tcp_syn(tcph) || is_tcp_syn_ack(tcph) || is_tcp_rst(tcph))) {
+        bpf_printk("tcp_xdp_slowpath qid=%u src=%u:%u dst=%u:%u flags=%x\n",
+                   qid, bpf_ntohl(iph->saddr), bpf_ntohs(tcph->source),
+                   bpf_ntohl(iph->daddr), bpf_ntohs(tcph->dest),
+                   ((__u8 *)tcph)[13]);
         goto slowpath;
     }
 
@@ -372,9 +376,11 @@ int xdp_sock_prog(struct xdp_md *ctx)
 slowpath:
     sp = bpf_map_lookup_elem(&slow_path_map, &qid);
     if (unlikely(!sp || !sp->active)) {
+        bpf_printk("tcp_xdp_slowpath_missing qid=%u sp=%p\n", qid, sp);
         xdp_log_err("ERROR: slow_path_info not found or inactive");
         return XDP_DROP;
     }
+    bpf_printk("tcp_xdp_slowpath_redirect qid=%u xsk=%u\n", qid, sp->sp_xsk_map_key);
     return bpf_redirect_map(&xsks_map, sp->sp_xsk_map_key, XDP_DROP);
 }
 
