@@ -365,7 +365,8 @@ static int socket_tcp_poll(struct app_ctx_per_thread *tctx, int budget, int time
             if (!s)
                 break;
             socket_lock(s);
-            if (!events[i].ev.accept.conn || s != events[i].ev.accept.conn->s)
+            if (!events[i].ev.accept.conn ||
+                lookup_socket_with_fd(events[i].ev.accept.newfd) != events[i].ev.accept.conn->s)
             {
                 socket_unlock(s);
                 break;

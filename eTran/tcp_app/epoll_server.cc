@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstddef>
+#include <cstring>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -103,7 +104,7 @@ static inline int listen_socket(int fd, int epfd, uint32_t events)
             if (errno == EINTR) {
                 continue;
             }
-            fprintf(stderr, "Failed to accept new connection\n");
+            fprintf(stderr, "Failed to accept new connection: errno=%d (%s)\n", errno, strerror(errno));
             return -1;
         }
         // printf("Connection accpeted: %d\n", newfd);
