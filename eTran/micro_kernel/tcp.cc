@@ -1016,7 +1016,10 @@ void poll_tcp_cc_to(void)
                 {
                     if (c->syn_attempts > 3)
                     {
-                        printf("Handshake timeout for connection (%p), %d\n", c, c->syn_attempts);
+                        printf("Handshake timeout for connection (%p), attempts=%d local=%u:%u remote=%u:%u\n",
+                               c, c->syn_attempts, c->local_ip, c->local_port,
+                               c->remote_ip, c->remote_port);
+                        notify_app_tcp_conn_open(c->tctx, c->opaque_connection, c->fd, -1, nullptr);
                         to_put.push_back(c);
                     }
                 }
@@ -1105,12 +1108,18 @@ int poll_tcp_handshake_events(void)
             /* arm a TCP handshake timer */
             c->next_timeout_tsc = get_cycles() + us_to_cycles(TCP_HANDSHAKE_TIMEOUT * 1000);
             /* send SYN packet */
+            printf("Send TCP_SYN, local=%u:%u remote=%u:%u attempt=%d\n",
+                   c->local_ip, c->local_port, c->remote_ip, c->remote_port,
+                   c->syn_attempts);
             send_tcp_control(c, TCP_SYN | TCP_ECE | TCP_CWR, 1, 0, TCP_MSS);
             work++;
             break;
         case CONN_WAIT_TX_SYNACK:
             c->status = CONN_OPEN;
             /* send SYN-ACK packet */
+            printf("Send TCP_SYNACK, local=%u:%u remote=%u:%u qid=%u\n",
+                   c->local_ip, c->local_port, c->remote_ip, c->remote_port,
+                   c->qid);
             if (c->flags & ECN_ENABLE)
                 send_tcp_control(c, TCP_SYN | TCP_ACK | TCP_ECE, 1, c->syn_ts, TCP_MSS);
             else
