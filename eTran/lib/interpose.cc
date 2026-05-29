@@ -103,8 +103,11 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     ensure_init();
     if (unlikely(sockfd < 0))
         return -EINVAL;
-    if (eTran_connect(sockfd, addr, addrlen))
+    int ret = eTran_connect(sockfd, addr, addrlen);
+    if (ret < 0 && errno == EBADF)
         return libc_connect(sockfd, addr, addrlen);
+    if (ret < 0)
+        return -1;
     return 0;
 }
 
@@ -132,8 +135,10 @@ int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     if (unlikely(sockfd < 0))
         return -EINVAL;
     newfd = eTran_accept(sockfd, addr, addrlen);
-    if (newfd < 0 && (newfd != -EAGAIN && newfd != -EWOULDBLOCK))
+    if (newfd < 0 && errno == EBADF)
         return libc_accept(sockfd, addr, addrlen);
+    if (newfd < 0)
+        return -1;
     return newfd;
 }
 
