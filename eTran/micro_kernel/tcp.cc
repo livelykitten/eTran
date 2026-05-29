@@ -1408,11 +1408,16 @@ int tcp_packet(struct app_ctx *actx, struct pkt_tcp *p, uint32_t qid)
     struct tcp_listener *l;
     struct tcp_opts opts = {0};
     int ret = 0;
+    uint8_t flags = TCPH_FLAGS(&p->tcp);
 
 #ifdef DEBUG_TCP
     fprintf(stdout, "tcp_packet()\n");
 #endif
-    // fprintf(stdout, "tcp_packet()\n");
+    fprintf(stdout,
+            "tcp_packet: qid=%u src=%u:%u dst=%u:%u flags=0x%x seq=%u ack=%u\n",
+            qid, ntohl(p->ip.src), ntohs(p->tcp.src),
+            ntohl(p->ip.dest), ntohs(p->tcp.dest), flags,
+            ntohl(p->tcp.seqno), ntohl(p->tcp.ackno));
 
     if (parse_tcp_opts(p, &opts))
         return -1;
@@ -1422,6 +1427,8 @@ int tcp_packet(struct app_ctx *actx, struct pkt_tcp *p, uint32_t qid)
 #ifdef DEBUG_TCP
         fprintf(stdout, "A corresponding connection is found\n");
 #endif
+        fprintf(stdout, "tcp_packet: matched connection=%p status=%d local=%u:%u remote=%u:%u\n",
+                c, c->status, c->local_ip, c->local_port, c->remote_ip, c->remote_port);
         tcp_connection_pkt(c, p, qid, &opts);
     }
     else
@@ -1431,6 +1438,8 @@ int tcp_packet(struct app_ctx *actx, struct pkt_tcp *p, uint32_t qid)
 #ifdef DEBUG_TCP
             fprintf(stdout, "A corresponding listener is found\n");
 #endif
+            fprintf(stdout, "tcp_packet: matched listener=%p port=%u backlog=%zu pending=%p\n",
+                    l, l->listen_port, l->backlog.size(), l->pending_conn);
             tcp_listener_pkt(l, p, qid, &opts);
         }
         else
@@ -1439,6 +1448,9 @@ int tcp_packet(struct app_ctx *actx, struct pkt_tcp *p, uint32_t qid)
             fprintf(stdout, "No connection and listener are found, send RST back\n");
             fprintf(stdout, "No connection and listener are found, send RST back, %u, %d\n", htons(p->tcp.dest), (TCPH_FLAGS(&p->tcp)));
 #endif
+            fprintf(stdout,
+                    "tcp_packet: no match, sending RST for dst=%u flags=0x%x\n",
+                    ntohs(p->tcp.dest), flags);
             ret = -1;
             /* send reset if the packet received wasn't a reset */
             if (!(TCPH_FLAGS(&p->tcp) & TCP_RST))
