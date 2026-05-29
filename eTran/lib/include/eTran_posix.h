@@ -6,6 +6,8 @@
 #include <homa_if.h>
 #include <intf/intf.h>
 
+#include <cstdlib>
+
 #include "eTran_common.h"
 
 #define MAX_FD 1024 * 1024
@@ -53,6 +55,165 @@ size_t tcp_flow_tx_segmentation_zc_retransmission(struct app_ctx_per_thread *tct
 static inline void dma(void *dst, void *src, size_t len)
 {
     memcpy(dst, src, len);
+}
+
+static inline size_t eTran_tcp_rx_contiguous_count(struct eTrantcp_connection *conn)
+{
+    size_t contiguous = 0;
+
+    while (contiguous < conn->rx_buf_size) {
+        uint32_t expected_pos = conn->rxb_head + contiguous;
+        if (expected_pos >= conn->rx_buf_size) {
+            expected_pos -= conn->rx_buf_size;
+        }
+
+        size_t best_len = 0;
+        for (auto it = conn->rx_addrs.begin(); it != conn->rx_addrs.end(); it++) {
+            auto [addr, pkt] = *it;
+            (void)addr;
+            uint16_t py_len = rxmeta_plen(pkt);
+            uint32_t rx_pos = rxmeta_pos(pkt);
+            uint32_t delta = expected_pos >= rx_pos ?
+                             expected_pos - rx_pos :
+                             conn->rx_buf_size - rx_pos + expected_pos;
+
+            if (delta < py_len) {
+                best_len = py_len - delta;
+                break;
+            }
+        }
+
+        if (!best_len) {
+            break;
+        }
+
+        contiguous += best_len;
+    }
+
+    return contiguous;
+}
+
+#ifdef ETRAN_RX_DEBUG
+static inline void eTran_tcp_rx_dump_state(const char *tag, struct eTrantcp_connection *conn)
+{
+    fprintf(stderr,
+            "%s: conn=%p rxb_head=%u rxb_used=%u rx_buf_size=%u rx_addrs=%zu ooo_rx_addrs=%zu",
+            tag, conn, conn->rxb_head, conn->rxb_used, conn->rx_buf_size,
+            conn->rx_addrs.size(), conn->ooo_rx_addrs.size());
+
+    unsigned int shown = 0;
+    for (auto it = conn->rx_addrs.begin(); it != conn->rx_addrs.end() && shown < 8; it++, shown++) {
+        auto [addr, pkt] = *it;
+        fprintf(stderr, " rx[%u]={addr=%lu,pos=%u,plen=%u,poff=%u}",
+                shown, addr, rxmeta_pos(pkt), rxmeta_plen(pkt), rxmeta_poff(pkt));
+    }
+
+    shown = 0;
+    for (auto it = conn->ooo_rx_addrs.begin(); it != conn->ooo_rx_addrs.end() && shown < 8; it++, shown++) {
+        auto [addr, pkt] = *it;
+        fprintf(stderr, " ooo[%u]={addr=%lu,pos=%u,plen=%u,poff=%u}",
+                shown, addr, rxmeta_pos(pkt), rxmeta_plen(pkt), rxmeta_poff(pkt));
+    }
+
+    fprintf(stderr, "\n");
+}
+#endif
+
+static inline void eTran_tcp_dump_bytes(const char *label, const char *base,
+                                        size_t off, size_t len)
+{
+    fprintf(stderr, "%s@%zu:", label, off);
+    for (size_t i = 0; i < len; i++) {
+        fprintf(stderr, " %02x", static_cast<unsigned char>(base[off + i]));
+    }
+    fprintf(stderr, "\n");
+}
+
+static inline bool eTran_tcp_parse_payload_offset(const char *pkt,
+                                                  size_t *payload_off,
+                                                  size_t *ip_off,
+                                                  size_t *tcp_off)
+{
+    constexpr size_t ETRAN_ETH_HLEN = 14;
+    const unsigned char *p = reinterpret_cast<const unsigned char *>(pkt);
+    uint16_t eth_proto = (static_cast<uint16_t>(p[12]) << 8) | p[13];
+
+    if (eth_proto != 0x0800) {
+        return false;
+    }
+
+    size_t ihl = (p[ETRAN_ETH_HLEN] & 0x0f) * 4;
+    if (ihl < 20) {
+        return false;
+    }
+
+    size_t th_off = ETRAN_ETH_HLEN + ihl;
+    size_t th_len = ((p[th_off + 12] >> 4) & 0x0f) * 4;
+    if (th_len < 20) {
+        return false;
+    }
+
+    *ip_off = ETRAN_ETH_HLEN;
+    *tcp_off = th_off;
+    *payload_off = th_off + th_len;
+    return true;
+}
+
+static inline void eTran_tcp_dump_rx_lists(struct eTrantcp_connection *conn)
+{
+    unsigned int shown = 0;
+    for (auto it = conn->rx_addrs.begin(); it != conn->rx_addrs.end() && shown < 16; it++, shown++) {
+        auto [addr, pkt] = *it;
+        fprintf(stderr, "  rx[%u]: addr=%lu pkt=%p pos=%u plen=%u poff=%u\n",
+                shown, addr, pkt, rxmeta_pos(pkt), rxmeta_plen(pkt), rxmeta_poff(pkt));
+    }
+
+    shown = 0;
+    for (auto it = conn->ooo_rx_addrs.begin(); it != conn->ooo_rx_addrs.end() && shown < 16; it++, shown++) {
+        auto [addr, pkt] = *it;
+        fprintf(stderr, "  ooo[%u]: addr=%lu pkt=%p pos=%u plen=%u poff=%u\n",
+                shown, addr, pkt, rxmeta_pos(pkt), rxmeta_plen(pkt), rxmeta_poff(pkt));
+    }
+}
+
+static inline void eTran_tcp_abort_if_header_copy(struct eTrantcp_connection *conn,
+                                                  uint64_t addr, char *pkt,
+                                                  uint32_t expected_pos,
+                                                  uint32_t rx_pos,
+                                                  uint16_t py_off,
+                                                  uint16_t py_len,
+                                                  uint32_t pkt_delta,
+                                                  size_t append_len,
+                                                  uint32_t copy_offset,
+                                                  size_t count)
+{
+    size_t payload_off = 0;
+    size_t ip_off = 0;
+    size_t tcp_off = 0;
+    size_t src_off = static_cast<size_t>(py_off) + pkt_delta;
+
+    if (!eTran_tcp_parse_payload_offset(pkt, &payload_off, &ip_off, &tcp_off)) {
+        return;
+    }
+
+    if (src_off >= payload_off) {
+        return;
+    }
+
+    fprintf(stderr,
+            "FATAL: TCP RX copy source is inside packet header\n"
+            "  conn=%p addr=%lu pkt=%p rxb_head=%u rxb_used=%u rx_buf_size=%u\n"
+            "  expected_pos=%u rx_pos=%u py_off=%u py_len=%u pkt_delta=%u src_off=%zu append_len=%zu\n"
+            "  copy_offset=%u count=%zu ip_off=%zu tcp_off=%zu payload_off=%zu\n",
+            conn, addr, pkt, conn->rxb_head, conn->rxb_used, conn->rx_buf_size,
+            expected_pos, rx_pos, py_off, py_len, pkt_delta, src_off, append_len,
+            copy_offset, count, ip_off, tcp_off, payload_off);
+
+    eTran_tcp_dump_bytes("copy_src", pkt, src_off, 16);
+    eTran_tcp_dump_bytes("ip_hdr", pkt, ip_off, 20);
+    eTran_tcp_dump_bytes("tcp_hdr", pkt, tcp_off, 20);
+    eTran_tcp_dump_rx_lists(conn);
+    abort();
 }
 
 /**
@@ -128,70 +289,74 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
         count = conn->rxb_used;
     }
 
-    if (conn->rxb_head + count > conn->rx_buf_size) {
-        // valid range [conn->rxb_head, conn->rx_buf_size), [0, conn->rxb_head + count - conn->rx_buf_size)
-        for (auto it = conn->rx_addrs.begin(); it != conn->rx_addrs.end();) {
-            auto [addr, pkt] = *it;
-            uint16_t py_len = rxmeta_plen(pkt);
-            uint16_t py_off = rxmeta_poff(pkt);
-            uint32_t rx_pos = rxmeta_pos(pkt);
-            if (rx_pos >= conn->rxb_head || rx_pos < conn->rxb_head + count - conn->rx_buf_size) {
-                auto append_len = std::min((size_t)py_len, count - copy_offset);
-                dma((uint8_t *)buf + copy_offset, pkt + py_off, append_len);
-                copy_offset += append_len;
-
-                if (likely(append_len == py_len)) {
-                    thread_bcache_prod(&tctx->iobuffer, addr);
-                    // remove from rx_addrs
-                    it = conn->rx_addrs.erase(it);
-                } else {
-                    /* truncate packet */
-                    rxmeta_set_poff(pkt, py_off + append_len);
-                    rxmeta_set_plen(pkt, py_len - append_len);
-                    rxmeta_set_pos(pkt, rx_pos + append_len > conn->rx_buf_size ? rx_pos + append_len - conn->rx_buf_size : rx_pos + append_len);
-                    // printf("truncate packet: copy_offset(%u), append_len(%ld)\n", copy_offset, append_len);
-                    break;
-                }
-
-            } else {
-                // printf("mismatch: rx_pos(%u), conn->rxb_head(%u), count(%ld)\n", rx_pos, conn->rxb_head, count);
-                it++;
-            }
-            if (copy_offset == count)
-                break;
+    while (copy_offset < count) {
+        uint32_t expected_pos = conn->rxb_head + copy_offset;
+        if (expected_pos >= conn->rx_buf_size) {
+            expected_pos -= conn->rx_buf_size;
         }
-        
-    } else {
-        // valid range [conn->rxb_head, conn->rxb_head + count)
-        for (auto it = conn->rx_addrs.begin(); it != conn->rx_addrs.end();) {
+
+        auto it = conn->rx_addrs.begin();
+        uint32_t pkt_delta = 0;
+        for (; it != conn->rx_addrs.end(); it++) {
             auto [addr, pkt] = *it;
             uint16_t py_len = rxmeta_plen(pkt);
-            uint16_t py_off = rxmeta_poff(pkt);
             uint32_t rx_pos = rxmeta_pos(pkt);
-            if (rx_pos >= conn->rxb_head && rx_pos < conn->rxb_head + count) {
-                auto append_len = std::min((size_t)py_len, count - copy_offset);
-                dma((uint8_t *)buf + copy_offset, pkt + py_off, append_len);
-                copy_offset += append_len;
-
-                if (likely(append_len == py_len)) {
-                    thread_bcache_prod(&tctx->iobuffer, addr);
-                    // remove from rx_addrs
-                    it = conn->rx_addrs.erase(it);
-                } else {
-                    /* truncate packet */
-                    rxmeta_set_poff(pkt, py_off + append_len);
-                    rxmeta_set_plen(pkt, py_len - append_len);
-                    rxmeta_set_pos(pkt, rx_pos + append_len > conn->rx_buf_size ? rx_pos + append_len - conn->rx_buf_size : rx_pos + append_len);
-                    // printf("truncate packet: copy_offset(%u), append_len(%ld)\n", copy_offset, append_len);
-                    break;
-                }
-
-            } else {
-                // printf("mismatch: rx_pos(%u), conn->rxb_head(%u), count(%ld)\n", rx_pos, conn->rxb_head, count);
-                it++;
-            }
-            if (copy_offset == count)
+            uint32_t delta = expected_pos >= rx_pos ?
+                             expected_pos - rx_pos :
+                             conn->rx_buf_size - rx_pos + expected_pos;
+            if (delta < py_len) {
+                pkt_delta = delta;
                 break;
+            }
+        }
+
+        if (it == conn->rx_addrs.end()) {
+#ifdef ETRAN_RX_DEBUG
+            if (copy_offset == 0) {
+                uint32_t first_pos = POISON_32;
+                uint16_t first_len = POISON_16;
+                uint16_t first_off = POISON_16;
+                if (!conn->rx_addrs.empty()) {
+                    auto [first_addr, first_pkt] = conn->rx_addrs.front();
+                    (void)first_addr;
+                    first_pos = rxmeta_pos(first_pkt);
+                    first_len = rxmeta_plen(first_pkt);
+                    first_off = rxmeta_poff(first_pkt);
+                }
+                fprintf(stderr,
+                        "rx ordered peek stalled: expected_pos=%u rxb_head=%u rxb_used=%u "
+                        "count=%zu rx_addrs=%zu first_pos=%u first_len=%u first_off=%u\n",
+                        expected_pos, conn->rxb_head, conn->rxb_used, count,
+                        conn->rx_addrs.size(), first_pos, first_len, first_off);
+                eTran_tcp_rx_dump_state("rx ordered peek stalled state", conn);
+            }
+#endif
+            break;
+        }
+
+        auto [addr, pkt] = *it;
+        uint16_t py_len = rxmeta_plen(pkt);
+        uint16_t py_off = rxmeta_poff(pkt);
+        auto append_len = std::min((size_t)py_len - pkt_delta, count - copy_offset);
+
+        eTran_tcp_abort_if_header_copy(conn, addr, pkt, expected_pos, rxmeta_pos(pkt),
+                                       py_off, py_len, pkt_delta, append_len,
+                                       copy_offset, count);
+        dma((uint8_t *)buf + copy_offset, pkt + py_off + pkt_delta, append_len);
+        copy_offset += append_len;
+
+        if (likely(pkt_delta + append_len == py_len)) {
+            thread_bcache_prod(&tctx->iobuffer, addr);
+            conn->rx_addrs.erase(it);
+        } else {
+            uint32_t rx_pos = expected_pos + append_len;
+            if (rx_pos >= conn->rx_buf_size) {
+                rx_pos -= conn->rx_buf_size;
+            }
+            rxmeta_set_poff(pkt, py_off + pkt_delta + append_len);
+            rxmeta_set_plen(pkt, py_len - pkt_delta - append_len);
+            rxmeta_set_pos(pkt, rx_pos);
+            break;
         }
     }
 
@@ -217,7 +382,7 @@ static inline int eTran_tcp_rx_release(struct app_ctx_per_thread *tctx, struct e
     conn->rxb_bump += len;
 
     conn->rxb_head += len;
-    if (conn->rxb_head > conn->rx_buf_size) {
+    if (conn->rxb_head >= conn->rx_buf_size) {
         conn->rxb_head -= conn->rx_buf_size;
     }
 

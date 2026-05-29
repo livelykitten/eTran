@@ -355,6 +355,7 @@ static int socket_tcp_poll(struct app_ctx_per_thread *tctx, int budget, int time
                 break;
             }
             // fprintf(stdout,"socket_info:New connection arrives\n");
+            s->listener->pending_newconn++;
             socket_unlock(s);
             set_epoll_events(s, EPOLLIN);
             break;
@@ -1111,6 +1112,7 @@ int eTran_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
         errno = ENOMEM;
         return -ENOMEM;
     }
+    new_conn->s = ns;
 
     socket_lock(s);
 
@@ -1123,15 +1125,32 @@ int eTran_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
         goto out;
     }
 
+    if ((s->flags & SOF_NONBLOCK) && !s->listener->pending_newconn)
+    {
+        close(newfd);
+        delete new_conn;
+        errno = EAGAIN;
+        ret = -EAGAIN;
+        goto out;
+    }
+
+    if (s->listener->pending_newconn)
+    {
+        s->listener->pending_newconn--;
+        if (!s->listener->pending_newconn)
+            s->epoll_events &= ~EPOLLIN;
+    }
+
     if (eTran_tcp_accept(tctx, s->listener, new_conn, s->fd, newfd))
     {
+        s->listener->pending_newconn++;
+        s->epoll_events |= EPOLLIN;
         close(newfd);
         delete new_conn;
         errno = EIO;
         ret = -EIO;
         goto out;
     }
-    new_conn->s = s;
 
     socket_unlock(s);
     do
@@ -1150,8 +1169,8 @@ int eTran_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
         {
             close(newfd);
             delete new_conn;
-            errno = EIO;
-            ret = -EIO;
+            errno = EAGAIN;
+            ret = -EAGAIN;
             socket_lock(s);
             goto out;
         }
@@ -1164,7 +1183,6 @@ int eTran_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     ns->type = SOCKET_TYPE_CONNECTION;
     // new established connection should be writable, right?
     ns->epoll_events = EPOLLOUT;
-    new_conn->s = ns;
 
     return newfd;
 out:
@@ -1216,6 +1234,12 @@ ssize_t eTran_read(int fd, void *buf, size_t count)
         socket_tcp_poll(tctx, 64, -1);
         ret = conn_recv(tctx, s->conn, buf, count);
         polled = true;
+    }
+
+    if (ret == 0 && (s->flags & SOF_NONBLOCK) && s->status == S_CONN_CONNECTED)
+    {
+        errno = EAGAIN;
+        ret = -EAGAIN;
     }
 
     if (s->conn->rxb_used == 0)
@@ -1272,6 +1296,12 @@ ssize_t eTran_write(int fd, const void *buf, size_t count)
         socket_tcp_poll(tctx, 64, -1);
         ret = conn_send(tctx, s->conn, buf, count);
         polled = true;
+    }
+
+    if (ret == 0 && (s->flags & SOF_NONBLOCK) && s->status == S_CONN_CONNECTED)
+    {
+        errno = EAGAIN;
+        ret = -EAGAIN;
     }
 
     if (txb_bytes_avail(s->conn) == 0)
@@ -1753,4 +1783,3 @@ int eTran_select(int nfds, fd_set *readfds, fd_set *writefds,
 {
     return -EINVAL;
 }
-

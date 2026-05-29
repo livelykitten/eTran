@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <cerrno>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -14,6 +15,9 @@
 #include <string>
 #include <unordered_map>
 #include <atomic>
+#include <cstring>
+#include <random>
+#include <functional>
 
 #define MAX_THREADS 16
 
@@ -29,7 +33,7 @@ unsigned int max_outstanding = 1;
 unsigned int nr_flows = 1;
 unsigned int nr_threads = 1;
 unsigned int nr_queues = 1;
-unsigned int message_bytes = 100;
+unsigned int message_bytes = 128;
 std::string server_ip_str = "192.168.6.2";
 uint16_t server_port = 50000;
 
@@ -48,73 +52,254 @@ static std::atomic<uint64_t> total_resp_bytes[MAX_THREADS] = {};
 uint64_t prev_total_resp_bytes[MAX_THREADS] = {};
 static std::atomic<uint32_t> avg_nr_events(0);
 
+static void fill_random(uint8_t *buf, size_t len)
+{
+    static thread_local std::mt19937 rng(
+        0x12345678u ^ std::hash<std::thread::id>{}(std::this_thread::get_id())
+    );
+
+    std::uniform_int_distribution<unsigned int> dist(0, 255);
+
+    for (size_t i = 0; i < len; i++) {
+        buf[i] = static_cast<uint8_t>(dist(rng));
+    }
+}
+
 struct connection {
     int fd;
-    unsigned int recv_len;
-    unsigned int pending_bytes;
-    unsigned int total_bytes;
-    unsigned int message_bytes;
-    unsigned int max_outstanding;
-    char *buf;
     bool no_epoll_out;
-    
-    connection(int fd, unsigned int message_bytes, unsigned int max_outstanding) : fd(fd), message_bytes(message_bytes), max_outstanding(max_outstanding) {
+
+    const unsigned int MAX_OUTSTANDING;
+
+    const bool short_response;
+
+    const unsigned int SEND_MSG_SIZE;
+    char *send_buf;
+    ssize_t send_buf_len;
+    ssize_t total_msg_size;
+    char *send_buf_check_pos;
+    char *send_buf_send_pos;
+
+    ssize_t outstanding_bytes;
+    ssize_t num_outstanding_msg;
+
+    const unsigned int RECV_MSG_SIZE;
+    char *recv_buf;
+    ssize_t recv_buf_len;
+    char *recv_buf_pos;
+    char *recv_check_pos;
+
+    connection(int fd, unsigned int send_msg_size, unsigned int max_outstanding, bool short_response)
+        : fd(fd), MAX_OUTSTANDING(max_outstanding), short_response(short_response), SEND_MSG_SIZE(send_msg_size), RECV_MSG_SIZE(short_response ? SHORT_RESPONSE_SIZE : send_msg_size) {
+
         no_epoll_out = false;
-        recv_len = 0;
-        total_bytes = message_bytes * max_outstanding;
-        pending_bytes = total_bytes;
-        buf = (char *)calloc(1, total_bytes);
+
+        total_msg_size = SEND_MSG_SIZE * MAX_OUTSTANDING;
+        send_buf_len = 2 * total_msg_size;
+        send_buf = (char *)calloc(1, send_buf_len);
+        fill_random((uint8_t *)send_buf, total_msg_size);
+        memcpy(send_buf + total_msg_size, send_buf, total_msg_size);
+        send_buf_check_pos = send_buf;
+        send_buf_send_pos = send_buf;
+        outstanding_bytes = 0;
+        num_outstanding_msg = 0;
+
+        recv_buf_len = 2 * RECV_MSG_SIZE * MAX_OUTSTANDING;
+        recv_buf = (char *)calloc(1, recv_buf_len);
+        recv_buf_pos = recv_buf;
+        recv_check_pos = recv_buf;
+        
+    }
+    ~connection() {
+        free(send_buf);
+        free(recv_buf);
     }
 };
 
 static inline int connection_send(unsigned int tid, struct connection *c)
 {
     ssize_t ret;
-    uint32_t target_bytes;
     int need_epoll_out = 0;
     // Transmit messages as much as possible through this connection until we reach max_outstanding or no buffer space
-    while (c->pending_bytes) {
-        target_bytes = std::min(c->pending_bytes, c->message_bytes);
-        ret = write(c->fd, c->buf + (c->total_bytes - c->pending_bytes), std::min(target_bytes, (unsigned int)DATA_BLOCK_SIZE));
+    assert(c->total_msg_size >= c->outstanding_bytes);
+
+    ssize_t prev_outstanding_bytes = c->outstanding_bytes;
+    while (c->outstanding_bytes < c->total_msg_size ) {
+        unsigned int pending_bytes = c->total_msg_size - c->outstanding_bytes;
+        ret = write(c->fd, c->send_buf_send_pos, std::min(pending_bytes, (unsigned int)DATA_BLOCK_SIZE));
         if (ret > 0) {
-            c->pending_bytes -= ret;
+            c->send_buf_send_pos += ret;
+            if (c->send_buf_send_pos >= c->send_buf + c->total_msg_size) {
+                c->send_buf_send_pos -= c->total_msg_size;
+            }
+
+            c->outstanding_bytes += ret;
             total_req_bytes[tid].fetch_add(ret);
-        }
-        else {
-            // no buffer space
+        } else if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             need_epoll_out = 1;
             break;
+        } else if (ret < 0 && (errno == EINTR)) {
+            continue;
+        } else {
+            return -1;
         }
     }
+
+    if (c->short_response)
+        c->num_outstanding_msg += c->outstanding_bytes / c->SEND_MSG_SIZE - prev_outstanding_bytes / c->SEND_MSG_SIZE;
+
     return need_epoll_out;
 }
 
-static inline void connection_recv(unsigned int tid, struct connection *c)
+static inline int connection_recv(unsigned int tid, struct connection *c)
 {
     ssize_t ret;
-    bool wait_response = c->pending_bytes + c->message_bytes <= c->total_bytes;
-    // Receive messages as much as possible through this connection if there are outstanding messages
-    while (wait_response) {
-        uint32_t target_bytes = short_response ? SHORT_RESPONSE_SIZE : message_bytes;
-        ret = read(c->fd, c->buf + c->recv_len, std::min(target_bytes, (unsigned int)DATA_BLOCK_SIZE));
-        if (ret > 0) {
-            c->recv_len += ret;
-            total_resp_bytes[tid].fetch_add(ret);
-        } else {
-            // no more data
-            break;
+    
+    if (c->short_response) {
+        while (c->outstanding_bytes > 0) {
+            // ssize_t complete_outstanding_msgs = c->outstanding_bytes / c->SEND_MSG_SIZE;
+            ssize_t partial_recv_bytes = c->recv_buf_pos - c->recv_check_pos;
+            if (partial_recv_bytes > 0 && c->recv_check_pos != c->recv_buf) {
+                memmove(c->recv_buf, c->recv_check_pos, partial_recv_bytes);
+                c->recv_check_pos = c->recv_buf;
+                c->recv_buf_pos = c->recv_buf + partial_recv_bytes;
+            } else if (partial_recv_bytes == 0) {
+                c->recv_check_pos = c->recv_buf;
+                c->recv_buf_pos = c->recv_buf;
+            }
+
+            ssize_t outstanding_resp_bytes = c->num_outstanding_msg * SHORT_RESPONSE_SIZE - partial_recv_bytes;
+            if (outstanding_resp_bytes <= 0)
+                break;
+
+            ssize_t recv_buf_avail = c->recv_buf + c->recv_buf_len - c->recv_buf_pos;
+            ret = read(c->fd, c->recv_buf_pos,
+                       std::min(std::min(outstanding_resp_bytes, recv_buf_avail), (ssize_t)DATA_BLOCK_SIZE));
+
+            if (ret > 0) {
+                c->recv_buf_pos += ret;
+                unsigned int num_responses = (c->recv_buf_pos - c->recv_check_pos) / SHORT_RESPONSE_SIZE;
+                
+                for (unsigned int i = 0; i < num_responses; i++) {
+                    if (memcmp(c->send_buf_check_pos, c->recv_check_pos, SHORT_RESPONSE_SIZE) != 0) {
+                        unsigned int mismatch = 0;
+                        int matched_msg = -1;
+                        int expected_msg = (c->send_buf_check_pos - c->send_buf) / c->SEND_MSG_SIZE;
+                        while (mismatch < SHORT_RESPONSE_SIZE &&
+                               c->send_buf_check_pos[mismatch] == c->recv_check_pos[mismatch]) {
+                            mismatch++;
+                        }
+                        for (unsigned int msg = 0; msg < c->MAX_OUTSTANDING; msg++) {
+                            if (memcmp(c->send_buf + msg * c->SEND_MSG_SIZE,
+                                       c->recv_check_pos, SHORT_RESPONSE_SIZE) == 0) {
+                                matched_msg = msg;
+                                break;
+                            }
+                        }
+                        fprintf(stderr,
+                                "short response mismatch: mismatch=%u, expected=%02x, actual=%02x, "
+                                "expected_msg=%d, matched_msg=%d, num_responses=%u/%u, "
+                                "outstanding_bytes=%zd, num_outstanding_msg=%zd, "
+                                "recv_pending=%zd\n",
+                                mismatch,
+                                mismatch < SHORT_RESPONSE_SIZE ? (unsigned char)c->send_buf_check_pos[mismatch] : 0,
+                                mismatch < SHORT_RESPONSE_SIZE ? (unsigned char)c->recv_check_pos[mismatch] : 0,
+                                expected_msg, matched_msg, i, num_responses,
+                                c->outstanding_bytes, c->num_outstanding_msg,
+                                c->recv_buf_pos - c->recv_check_pos);
+                        assert(false);
+                    }
+
+                    c->send_buf_check_pos += c->SEND_MSG_SIZE;
+                    c->recv_check_pos += SHORT_RESPONSE_SIZE;
+                }
+
+                if (c->send_buf_check_pos >= c->send_buf + c->total_msg_size) {
+                    c->send_buf_check_pos -= c->total_msg_size;
+                }
+
+                c->num_outstanding_msg -= num_responses;
+                c->outstanding_bytes -= num_responses * c->SEND_MSG_SIZE;
+
+            
+                total_resp_bytes[tid].fetch_add(ret);
+            } else if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // no more message to recv
+                break;
+            } else if (ret < 0 && errno == EINTR) {
+                continue;
+            } else {
+                return -1;
+            }
         }
-        if (c->recv_len >= target_bytes) {
-            c->recv_len -= target_bytes;
-            c->pending_bytes += message_bytes;
+
+    } else {
+        while (c->outstanding_bytes > 0) {
+            ssize_t recv_buf_avail = c->recv_buf + c->total_msg_size - c->recv_buf_pos;
+            ret = read(c->fd, c->recv_buf_pos,
+                       std::min(std::min(c->outstanding_bytes, recv_buf_avail), (ssize_t)DATA_BLOCK_SIZE));
+            if (ret > 0) {
+                // check
+                if (memcmp(c->send_buf_check_pos, c->recv_buf_pos, ret) != 0) {
+                    ssize_t mismatch = 0;
+                    int expected_msg = (c->send_buf_check_pos - c->send_buf) / c->SEND_MSG_SIZE;
+                    int matched_msg = -1;
+                    while (mismatch < ret &&
+                           c->send_buf_check_pos[mismatch] == c->recv_buf_pos[mismatch]) {
+                        mismatch++;
+                    }
+                    for (unsigned int msg = 0; msg < c->MAX_OUTSTANDING; msg++) {
+                        ssize_t cmp_len = std::min((ssize_t)c->SEND_MSG_SIZE, ret);
+                        if (memcmp(c->send_buf + msg * c->SEND_MSG_SIZE,
+                                   c->recv_buf_pos, cmp_len) == 0) {
+                            matched_msg = msg;
+                            break;
+                        }
+                    }
+                    fprintf(stderr,
+                            "full response mismatch: mismatch=%zd/%zd, expected=%02x, actual=%02x, "
+                            "expected_msg=%d, matched_msg=%d, outstanding_bytes=%zd, "
+                            "recv_buf_offset=%zd, send_check_offset=%zd\n",
+                            mismatch, ret,
+                            mismatch < ret ? (unsigned char)c->send_buf_check_pos[mismatch] : 0,
+                            mismatch < ret ? (unsigned char)c->recv_buf_pos[mismatch] : 0,
+                            expected_msg, matched_msg, c->outstanding_bytes,
+                            c->recv_buf_pos - c->recv_buf,
+                            c->send_buf_check_pos - c->send_buf);
+                    assert(false);
+                }
+                // update positions
+                c->send_buf_check_pos += ret;
+                if (c->send_buf_check_pos >= c->send_buf + c->total_msg_size) {
+                    c->send_buf_check_pos -= c->total_msg_size;
+                }
+                c->recv_buf_pos += ret;
+                if (c->recv_buf_pos >= c->recv_buf + c->total_msg_size) {
+                    c->recv_buf_pos -= c->total_msg_size;
+                }
+
+                c->outstanding_bytes -= ret;
+
+                total_resp_bytes[tid].fetch_add(ret);
+            } else if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // no more message to recv
+                break;
+            } else if (ret < 0 && errno == EINTR) {
+                continue;
+            } else {
+                return -1;
+            }
         }
     }
+    return 0;
 }
 
 static inline int connection_events(unsigned int tid, struct connection *c, uint32_t events)
 {   
     if (events & EPOLLIN) {
-        connection_recv(tid, c);
+        int ret = connection_recv(tid, c);
+        if (ret < 0)
+            return ret;
     }
 
     return connection_send(tid, c);
@@ -182,7 +367,7 @@ void thread_func(unsigned int tid)
         }
 
         ev.events = EPOLLIN | EPOLLOUT | EPOLLERR;
-        ev.data.ptr = new connection(fd, message_bytes, max_outstanding);
+        ev.data.ptr = new connection(fd, message_bytes, max_outstanding, short_response);
 
         if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev) < 0) {
             fprintf(stderr, "Failed to add fd to epoll\n");
@@ -216,14 +401,26 @@ void thread_func(unsigned int tid)
             
             if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
                 fprintf(stderr, "EPOLLERR\n");
+                conn_fds_mtx.lock();
                 conn_fds.remove(c->fd);
+                conn_fds_mtx.unlock();
                 // remove from epoll
                 epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL);
                 close(c->fd);
+                delete c;
                 continue;
             }
             
             int ret = connection_events(tid, c, events[i].events);
+            if (ret < 0) {
+                conn_fds_mtx.lock();
+                conn_fds.remove(c->fd);
+                conn_fds_mtx.unlock();
+                epoll_ctl(epfd, EPOLL_CTL_DEL, c->fd, NULL);
+                close(c->fd);
+                delete c;
+                continue;
+            }
             if (ret == 0 && !c->no_epoll_out) {
                 ev.events = EPOLLIN | EPOLLERR;
                 ev.data.ptr = c;
@@ -296,14 +493,14 @@ int parse_args(int argc, char *argv[])
                     " [-t nr_threads, default:1]" <<
                     " [-l max_buf_size, default:4096]" << 
                     " [-q nr_queues, default:1]" <<
-                    " [-b bytes, default:100]" << 
+                    " [-b bytes, default:128]" << 
                     " [-i server_ip, default:192.168.6.2]" <<
                     " [-f nr_flows, default:1]"
                     " [-p server_port, default:50000]" << 
                     " [-w wait_seconds, default:0]" <<
-                    " [-s enable short_response, default:true]" << 
+                    " [-s disable short_response, default:true]" << 
                     " [-o max_outstanding, default:1]" <<
-                    " [-m multiport, default:false]" << 
+                    " [-m enable multiport, default:false]" << 
                     " [-d dump_io_stats]" << std::endl;
                 return -1;
         }
@@ -318,6 +515,17 @@ int main(int argc, char *argv[])
         std::cout << "Failed to parse arguments." << std::endl;
         exit(EXIT_FAILURE);
     }
+
+    if (message_bytes > max_buf_size) {
+        fprintf(stderr, "message_bytes larger than max_buf_size");
+        return -1;
+    }
+
+    if (nr_threads == 0 || nr_threads > MAX_THREADS) {
+        fprintf(stderr, "nr_threads must be between 1 and %d\n", MAX_THREADS);
+        return -1;
+    }
+
 
     for (unsigned int i = 0; i < nr_threads; i++) {
         threads.push_back(std::thread(thread_func, i));
@@ -338,9 +546,15 @@ int main(int argc, char *argv[])
             total_out += _out;
             total_in += _in;
 
+            size_t nr_conn_fds;
+            {
+                std::lock_guard<std::mutex> lock(conn_fds_mtx);
+                nr_conn_fds = conn_fds.size();
+            }
+
             printf("Throughput In/Out(%.2f/%.2f Gbps)(%.2f Kops) conn#(%lu), avg_nr_events(%u), total_out(%luB), total_in(%luB)\n", 
                 _out * 8.0 / 1e9, _in * 8.0 / 1e9, _out / message_bytes / 1e3,
-                conn_fds.size(), avg_nr_events.load(), total_out, total_in);
+                nr_conn_fds, avg_nr_events.load(), total_out, total_in);
         }
     }).detach();
 
