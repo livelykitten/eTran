@@ -159,9 +159,11 @@ ssize_t read(int fd, void *buf, size_t count)
     if (unlikely(fd < 0))
         return -EINVAL;
     ret = eTran_read(fd, buf, count);
-    if (ret < 0 && ret != -EAGAIN && ret != -EWOULDBLOCK) {
+    if (ret < 0 && errno == EBADF) {
         return libc_read(fd, buf, count);
     }
+    if (ret < 0)
+        return -1;
     return ret;
 }
 
@@ -172,9 +174,11 @@ ssize_t write(int fd, const void *buf, size_t count)
     if (unlikely(fd < 0))
         return -EINVAL;
     ret = eTran_write(fd, buf, count);
-    if (ret < 0 && ret != -EAGAIN && ret != -EWOULDBLOCK) {
+    if (ret < 0 && errno == EBADF) {
         return libc_write(fd, buf, count);
     }
+    if (ret < 0)
+        return -1;
     return ret;
 }
 

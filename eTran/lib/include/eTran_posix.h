@@ -6,8 +6,6 @@
 #include <homa_if.h>
 #include <intf/intf.h>
 
-#include <cstdlib>
-
 #include "eTran_common.h"
 
 #define MAX_FD 1024 * 1024
@@ -114,7 +112,7 @@ static inline void eTran_tcp_dump_rx_lists(struct eTrantcp_connection *conn)
     }
 }
 
-static inline void eTran_tcp_abort_if_header_copy(const char *path,
+static inline bool eTran_tcp_fail_if_header_copy(const char *path,
                                                   struct eTrantcp_connection *conn,
                                                   uint64_t addr, char *pkt,
                                                   uint32_t rx_pos,
@@ -130,15 +128,15 @@ static inline void eTran_tcp_abort_if_header_copy(const char *path,
     size_t src_off = py_off;
 
     if (!eTran_tcp_parse_payload_offset(pkt, &payload_off, &ip_off, &tcp_off)) {
-        return;
+        return false;
     }
 
     if (src_off >= payload_off) {
-        return;
+        return false;
     }
 
     fprintf(stderr,
-            "FATAL: stale TCP RX path is copying from packet header\n"
+            "ERROR: stale TCP RX path would copy from packet header\n"
             "  path=%s conn=%p addr=%lu pkt=%p rxb_head=%u rxb_used=%u rx_buf_size=%u\n"
             "  rx_pos=%u py_off=%u py_len=%u src_off=%zu append_len=%zu copy_offset=%u count=%zu\n"
             "  ip_off=%zu tcp_off=%zu payload_off=%zu\n",
@@ -150,10 +148,10 @@ static inline void eTran_tcp_abort_if_header_copy(const char *path,
     eTran_tcp_dump_bytes("ip_hdr", pkt, ip_off, 20);
     eTran_tcp_dump_bytes("tcp_hdr", pkt, tcp_off, 20);
     eTran_tcp_dump_rx_lists(conn);
-    abort();
+    return true;
 }
 
-static inline void eTran_tcp_abort_if_wrong_stream_pos(const char *path,
+static inline bool eTran_tcp_fail_if_wrong_stream_pos(const char *path,
                                                        struct eTrantcp_connection *conn,
                                                        uint64_t addr, char *pkt,
                                                        uint32_t rx_pos,
@@ -169,11 +167,11 @@ static inline void eTran_tcp_abort_if_wrong_stream_pos(const char *path,
     }
 
     if (rx_pos == expected_pos) {
-        return;
+        return false;
     }
 
     fprintf(stderr,
-            "FATAL: stale TCP RX path selected wrong stream position\n"
+            "ERROR: stale TCP RX path selected wrong stream position\n"
             "  path=%s conn=%p addr=%lu pkt=%p rxb_head=%u rxb_used=%u rx_buf_size=%u\n"
             "  expected_pos=%u rx_pos=%u py_off=%u py_len=%u append_len=%zu copy_offset=%u count=%zu\n",
             path, conn, addr, pkt, conn->rxb_head, conn->rxb_used, conn->rx_buf_size,
@@ -181,7 +179,7 @@ static inline void eTran_tcp_abort_if_wrong_stream_pos(const char *path,
 
     eTran_tcp_dump_bytes("copy_src", pkt, py_off, 16);
     eTran_tcp_dump_rx_lists(conn);
-    abort();
+    return true;
 }
 
 /**
@@ -266,12 +264,15 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
             uint32_t rx_pos = rxmeta_pos(pkt);
             if (rx_pos >= conn->rxb_head || rx_pos < conn->rxb_head + count - conn->rx_buf_size) {
                 auto append_len = std::min((size_t)py_len, count - copy_offset);
-                eTran_tcp_abort_if_header_copy("wrap", conn, addr, pkt, rx_pos,
-                                               py_off, py_len, append_len,
-                                               copy_offset, count);
-                eTran_tcp_abort_if_wrong_stream_pos("wrap", conn, addr, pkt, rx_pos,
-                                                    py_off, py_len, append_len,
-                                                    copy_offset, count);
+                if (eTran_tcp_fail_if_header_copy("wrap", conn, addr, pkt, rx_pos,
+                                                  py_off, py_len, append_len,
+                                                  copy_offset, count) ||
+                    eTran_tcp_fail_if_wrong_stream_pos("wrap", conn, addr, pkt, rx_pos,
+                                                       py_off, py_len, append_len,
+                                                       copy_offset, count)) {
+                    errno = EIO;
+                    return -EIO;
+                }
                 dma((uint8_t *)buf + copy_offset, pkt + py_off, append_len);
                 copy_offset += append_len;
 
@@ -305,12 +306,15 @@ static inline ssize_t eTran_tcp_rx_peek_count_zc(struct app_ctx_per_thread *tctx
             uint32_t rx_pos = rxmeta_pos(pkt);
             if (rx_pos >= conn->rxb_head && rx_pos < conn->rxb_head + count) {
                 auto append_len = std::min((size_t)py_len, count - copy_offset);
-                eTran_tcp_abort_if_header_copy("linear", conn, addr, pkt, rx_pos,
-                                               py_off, py_len, append_len,
-                                               copy_offset, count);
-                eTran_tcp_abort_if_wrong_stream_pos("linear", conn, addr, pkt, rx_pos,
-                                                    py_off, py_len, append_len,
-                                                    copy_offset, count);
+                if (eTran_tcp_fail_if_header_copy("linear", conn, addr, pkt, rx_pos,
+                                                  py_off, py_len, append_len,
+                                                  copy_offset, count) ||
+                    eTran_tcp_fail_if_wrong_stream_pos("linear", conn, addr, pkt, rx_pos,
+                                                       py_off, py_len, append_len,
+                                                       copy_offset, count)) {
+                    errno = EIO;
+                    return -EIO;
+                }
                 dma((uint8_t *)buf + copy_offset, pkt + py_off, append_len);
                 copy_offset += append_len;
 
